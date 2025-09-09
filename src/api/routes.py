@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 import logging
 from datetime import datetime
 import os
+import json
 
 from ..models.schemas import HealthResponse
 from ..services.video_processor import video_processor
