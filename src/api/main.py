@@ -12,8 +12,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Python API Server",
-    description="API сервер для общения с клиентом",
+    title="Dive Color Corrector API",
+    description="API сервер для обработки изображений и видео с коррекцией цветов",
     version="1.0.0"
 )
 

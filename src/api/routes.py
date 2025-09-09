@@ -1,21 +1,16 @@
-from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse
-from typing import List, Optional
 import logging
 from datetime import datetime
 import os
-import io
-import json
 
-from ..models.schemas import MessageRequest, MessageResponse, HealthResponse, StatsResponse
+from ..models.schemas import HealthResponse
 from ..services.video_processor import video_processor
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Хранилище сообщений (в продакшене используйте базу данных)
-messages_storage = []
 
 @router.get("/", response_model=HealthResponse)
 async def root():
@@ -35,69 +30,10 @@ async def health_check():
         version="1.0.0"
     )
 
-@router.post("/api/message", response_model=MessageResponse)
-async def send_message(request: MessageRequest):
-    """Отправка сообщения и получение ответа"""
-    try:
-        # Генерируем простой ответ
-        response_text = f"Echo: {request.message}"
-        
-        # Создаем ответ
-        message_response = MessageResponse(
-            id=f"msg_{len(messages_storage) + 1}",
-            message=request.message,
-            response=response_text,
-            timestamp=datetime.now(),
-            user_id=request.user_id
-        )
-        
-        # Сохраняем в хранилище
-        messages_storage.append(message_response)
-        
-        logger.info(f"Message processed: {request.message[:50]}...")
-        
-        return message_response
-        
-    except Exception as e:
-        logger.error(f"Error processing message: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
-        )
 
-@router.get("/api/messages", response_model=List[MessageResponse])
-async def get_messages(limit: int = 10):
-    """Получение последних сообщений"""
-    return messages_storage[-limit:] if messages_storage else []
 
-@router.get("/api/messages/{message_id}", response_model=MessageResponse)
-async def get_message(message_id: str):
-    """Получение конкретного сообщения по ID"""
-    for message in messages_storage:
-        if message.id == message_id:
-            return message
-    
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="Message not found"
-    )
 
-@router.delete("/api/messages/{message_id}")
-async def delete_message(message_id: str):
-    """Удаление сообщения по ID"""
-    global messages_storage
-    messages_storage = [msg for msg in messages_storage if msg.id != message_id]
-    
-    return {"message": "Message deleted successfully"}
 
-@router.get("/api/stats", response_model=StatsResponse)
-async def get_stats():
-    """Получение статистики сервера"""
-    return StatsResponse(
-        total_messages=len(messages_storage),
-        server_uptime="N/A",  # В продакшене добавьте отслеживание времени работы
-        timestamp=datetime.now()
-    )
 
 # Video processing endpoints
 @router.post("/api/process/image")
