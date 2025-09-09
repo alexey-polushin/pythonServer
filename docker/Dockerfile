@@ -43,5 +43,5 @@ USER app
 # Открываем порт
 EXPOSE 8000
 
-# Команда для запуска
-CMD ["gunicorn", "app:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
+# Оптимизированная команда для запуска с ограничениями памяти
+CMD ["gunicorn", "app:app", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "300", "--max-requests", "100", "--max-requests-jitter", "10", "--preload", "--worker-connections", "1000"]

@@ -36,6 +36,10 @@ class VideoProcessor:
     async def process_image(self, file: UploadFile) -> Dict[str, Any]:
         """Обрабатывает изображение для мобильного API"""
         try:
+            # Очищаем все старые файлы перед обработкой нового
+            cleaned_files = self.cleanup_all_files()
+            logger.info(f"Cleaned {len(cleaned_files)} old files before processing new image")
+            
             # Сохраняем загруженный файл
             input_path = self._get_temp_path(file.filename)
             output_path = self._get_output_path(file.filename)
@@ -54,7 +58,8 @@ class VideoProcessor:
             result.update({
                 "input_filename": file.filename,
                 "output_filename": os.path.basename(output_path),
-                "file_size": os.path.getsize(output_path) if os.path.exists(output_path) else 0
+                "file_size": os.path.getsize(output_path) if os.path.exists(output_path) else 0,
+                "cleaned_files_count": len(cleaned_files)
             })
             
             return result
@@ -66,6 +71,10 @@ class VideoProcessor:
     async def process_video(self, file: UploadFile) -> Generator[Dict[str, Any], None, None]:
         """Обрабатывает видео для мобильного API с прогрессом"""
         try:
+            # Очищаем все старые файлы перед обработкой нового
+            cleaned_files = self.cleanup_all_files()
+            logger.info(f"Cleaned {len(cleaned_files)} old files before processing new video")
+            
             # Сохраняем загруженный файл
             input_path = self._get_temp_path(file.filename)
             output_path = self._get_output_path(file.filename)
@@ -98,7 +107,8 @@ class VideoProcessor:
             result.update({
                 "input_filename": file.filename,
                 "output_filename": os.path.basename(output_path),
-                "file_size": os.path.getsize(output_path) if os.path.exists(output_path) else 0
+                "file_size": os.path.getsize(output_path) if os.path.exists(output_path) else 0,
+                "cleaned_files_count": len(cleaned_files)
             })
             
             yield result
@@ -133,6 +143,24 @@ class VideoProcessor:
                     if file_age > max_age_seconds:
                         os.remove(file_path)
                         logger.info(f"Removed old file: {file_path}")
+    
+    def cleanup_all_files(self):
+        """Удаляет все файлы в директориях uploads и outputs"""
+        cleaned_files = []
+        
+        for directory in [self.upload_dir, self.output_dir]:
+            if os.path.exists(directory):
+                for filename in os.listdir(directory):
+                    file_path = os.path.join(directory, filename)
+                    if os.path.isfile(file_path):
+                        try:
+                            os.remove(file_path)
+                            cleaned_files.append(file_path)
+                            logger.info(f"Removed file: {file_path}")
+                        except Exception as e:
+                            logger.error(f"Error removing file {file_path}: {str(e)}")
+        
+        return cleaned_files
 
 # Глобальный экземпляр процессора
 video_processor = VideoProcessor()
