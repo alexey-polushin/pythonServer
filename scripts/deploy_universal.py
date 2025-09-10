@@ -269,7 +269,7 @@ def deploy_to_server(config: Dict[str, Any]) -> bool:
     
     # Запускаем контейнеры
     print("🐳 Запускаем Docker контейнеры...")
-    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"cd /opt/{app_name} && docker-compose down && docker-compose up -d"):
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"cd /opt/{app_name} && docker-compose down && docker-compose up -d --build"):
         return False
     
     # Ждем запуска
@@ -284,7 +284,12 @@ def deploy_to_server(config: Dict[str, Any]) -> bool:
     # Проверяем доступность API
     print("🌐 Проверяем доступность API...")
     if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"curl -f http://localhost/health"):
-        print("⚠️ API может быть недоступен, но контейнеры запущены")
+        print("⚠️ API недоступен, принудительно пересобираем образы...")
+        if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"cd /opt/{app_name} && docker-compose down && docker-compose build --no-cache && docker-compose up -d"):
+            return False
+        time.sleep(30)
+        if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"curl -f http://localhost/health"):
+            print("⚠️ API все еще недоступен после пересборки")
     
     # Запускаем systemd сервис
     print("🔧 Запускаем systemd сервис...")
