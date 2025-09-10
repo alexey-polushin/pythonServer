@@ -117,12 +117,14 @@ Description=Python API Server with Dive Color Corrector
 After=network.target
 
 [Service]
+Type=oneshot
 User=root
 WorkingDirectory=/opt/dive-color-corrector
 ExecStart=/usr/local/bin/docker-compose up -d
 ExecStop=/usr/local/bin/docker-compose down
-Restart=always
-RestartSec=10
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target
@@ -160,6 +162,21 @@ fi
 
 # Пересборка и запуск
 docker-compose up -d --build
+
+# Ждем запуска контейнеров
+echo "⏳ Ждем запуска контейнеров..."
+sleep 30
+
+# Проверяем статус контейнеров
+echo "🔍 Проверяем статус контейнеров..."
+docker-compose ps
+
+# Если nginx не запущен, запускаем вручную
+if ! docker-compose ps | grep -q "nginx.*Up"; then
+    echo "⚠️ Nginx не запущен, запускаем вручную..."
+    docker-compose up -d nginx redis
+    sleep 10
+fi
 
 # Запуск сервиса
 systemctl start dive-color-corrector.service

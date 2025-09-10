@@ -70,7 +70,25 @@ nano server_config.json
 
 ### Автоматическое развертывание
 
-**Универсальный скрипт (рекомендуется):**
+**Быстрый деплой (рекомендуется):**
+```bash
+# Полное развертывание
+./deploy.sh
+
+# Или через Makefile
+make deploy
+```
+
+**Обновление кода:**
+```bash
+# Обновление существующего развертывания
+./deploy.sh update
+
+# Или через Makefile
+make update
+```
+
+**Универсальный скрипт:**
 ```bash
 python3 scripts/deploy_universal.py
 ```
@@ -86,6 +104,38 @@ scp -r . root@your-server:/opt/dive-color-corrector/
 
 # Запустить сервис
 ssh root@your-server "systemctl start dive-color-corrector.service"
+```
+
+### Управление развертыванием
+
+**Полезные команды:**
+```bash
+# Проверить статус API
+make status
+
+# Запустить локально для разработки
+make dev
+
+# Запустить тесты
+make test
+
+# Показать все команды
+make help
+```
+
+**Команды на сервере:**
+```bash
+# Статус сервиса
+systemctl status dive-color-corrector.service
+
+# Перезапуск сервиса
+systemctl restart dive-color-corrector.service
+
+# Мониторинг API
+/opt/dive-color-corrector/monitor.sh
+
+# Обновление (на сервере)
+/opt/dive-color-corrector/update.sh
 ```
 
 ### Локальная разработка

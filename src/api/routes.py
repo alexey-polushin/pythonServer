@@ -28,7 +28,7 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now(),
-        version="1.0.0"
+        version="1.0.5"
     )
 
 
