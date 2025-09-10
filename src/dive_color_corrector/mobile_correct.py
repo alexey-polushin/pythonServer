@@ -50,11 +50,13 @@ BATCH_SIZE = 32  # Размер батча для обработки кадро�
 MAX_PROCESSES = 4  # Максимальное количество процессов
 VIDEO_QUALITY = 60  # Качество выходного видео (0-100) - снижено для уменьшения размера
 USE_GPU = True  # Использовать GPU если доступен
+ENABLE_FFMPEG_OPTIMIZATION = True  # Включить постобработку через FFmpeg для лучшего сжатия
+VIDEO_CODEC = 'mp4v'  # Оптимальный кодек для .mp4 файлов
 
 # Загружаем конфигурацию при импорте модуля
 def _load_performance_config():
     """Загружает конфигурацию производительности"""
-    global BATCH_SIZE, MAX_PROCESSES, VIDEO_QUALITY, USE_GPU
+    global BATCH_SIZE, MAX_PROCESSES, VIDEO_QUALITY, USE_GPU, ENABLE_FFMPEG_OPTIMIZATION, VIDEO_CODEC
     
     try:
         import os
@@ -70,6 +72,8 @@ def _load_performance_config():
             MAX_PROCESSES = config.get('max_processes', MAX_PROCESSES)
             VIDEO_QUALITY = config.get('video_quality', VIDEO_QUALITY)
             USE_GPU = config.get('use_gpu', USE_GPU) and GPU_AVAILABLE
+            ENABLE_FFMPEG_OPTIMIZATION = config.get('enable_ffmpeg_optimization', ENABLE_FFMPEG_OPTIMIZATION)
+            VIDEO_CODEC = config.get('video_codec', VIDEO_CODEC)
             
             logger.info(f"Loaded performance config: batch_size={BATCH_SIZE}, max_processes={MAX_PROCESSES}, video_quality={VIDEO_QUALITY}, use_gpu={USE_GPU}")
         else:
@@ -121,9 +125,9 @@ def _save_performance_config():
     except Exception as e:
         logger.error(f"Error saving performance config: {e}")
 
-def configure_performance(batch_size=None, max_processes=None, video_quality=None, use_gpu=None):
+def configure_performance(batch_size=None, max_processes=None, video_quality=None, use_gpu=None, enable_ffmpeg_optimization=None, video_codec=None):
     """Настраивает параметры производительности"""
-    global BATCH_SIZE, MAX_PROCESSES, VIDEO_QUALITY, USE_GPU
+    global BATCH_SIZE, MAX_PROCESSES, VIDEO_QUALITY, USE_GPU, ENABLE_FFMPEG_OPTIMIZATION, VIDEO_CODEC
     
     config_changed = False
     
@@ -147,6 +151,20 @@ def configure_performance(batch_size=None, max_processes=None, video_quality=Non
         logger.info(f"GPU usage set to: {USE_GPU}")
         config_changed = True
     
+    if enable_ffmpeg_optimization is not None:
+        ENABLE_FFMPEG_OPTIMIZATION = enable_ffmpeg_optimization
+        logger.info(f"FFmpeg optimization set to: {ENABLE_FFMPEG_OPTIMIZATION}")
+        config_changed = True
+    
+    if video_codec is not None:
+        valid_codecs = ['mp4v']  # Только mp4v - оптимальный по весу и скорости
+        if video_codec in valid_codecs:
+            VIDEO_CODEC = video_codec
+            logger.info(f"Video codec set to: {VIDEO_CODEC}")
+            config_changed = True
+        else:
+            logger.warning(f"Invalid codec: {video_codec}. Valid options: {valid_codecs}")
+    
     # Сохраняем конфигурацию в файл если что-то изменилось
     if config_changed:
         _save_performance_config()
@@ -160,8 +178,43 @@ def get_performance_info():
         "use_gpu": USE_GPU,
         "gpu_available": GPU_AVAILABLE,
         "gpu_type": GPU_TYPE,
-        "cpu_count": mp.cpu_count()
+        "cpu_count": mp.cpu_count(),
+        "enable_ffmpeg_optimization": ENABLE_FFMPEG_OPTIMIZATION,
+        "video_codec": VIDEO_CODEC
     }
+
+def get_video_bitrate(video_path):
+    """Получает битрейт видео и аудио из метаданных"""
+    try:
+        import subprocess
+        import json
+        
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-print_format', 'json', 
+            '-show_streams', video_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            video_bitrate = None
+            audio_bitrate = None
+            
+            for stream in data.get('streams', []):
+                if stream.get('codec_type') == 'video' and 'bit_rate' in stream:
+                    video_bitrate = int(stream['bit_rate'])
+                elif stream.get('codec_type') == 'audio' and 'bit_rate' in stream:
+                    audio_bitrate = int(stream['bit_rate'])
+            
+            logger.info(f"Video bitrate: {video_bitrate}, Audio bitrate: {audio_bitrate}")
+            return video_bitrate, audio_bitrate
+        else:
+            logger.warning(f"Failed to get bitrate info: {result.stderr}")
+            return None, None
+            
+    except Exception as e:
+        logger.warning(f"Error getting video bitrate: {e}")
+        return None, None
 
 def get_video_rotation(video_path):
     """Определяет угол поворота видео из метаданных"""
@@ -264,6 +317,7 @@ def get_rotated_dimensions(width, height, rotation_angle):
     if rotation_angle in [90, 270]:
         return height, width
     return width, height
+
 
 def hue_shift_red(mat, h):
     """Сдвиг оттенка красного канала"""
@@ -545,8 +599,9 @@ def _process_frame_for_analysis(args):
 def analyze_video_mobile(input_video_path, output_video_path, progress_callback=None):
     """Анализирует видео для мобильного API (оптимизированная версия)"""
     try:
-        # Определяем поворот видео
+        # Определяем поворот видео и битрейт
         rotation_angle = get_video_rotation(input_video_path)
+        video_bitrate, audio_bitrate = get_video_bitrate(input_video_path)
         
         cap = cv2.VideoCapture(input_video_path)
         if not cap.isOpened():
@@ -631,7 +686,9 @@ def analyze_video_mobile(input_video_path, output_video_path, progress_callback=
             "frame_count": count,
             "filters": filter_matrices,
             "filter_indices": list(filter_matrix_indexes),
-            "rotation_angle": rotation_angle
+            "rotation_angle": rotation_angle,
+            "original_bitrate": video_bitrate,
+            "original_audio_bitrate": audio_bitrate
         }
         
     except Exception as e:
@@ -696,8 +753,9 @@ def process_video_mobile(video_data, progress_callback=None):
         output_width, output_height = get_rotated_dimensions(frame_width, frame_height, rotation_angle)
         logger.info(f"Output video dimensions after rotation: {output_width}x{output_height}")
 
-        # Используем более эффективный кодек
-        fourcc = cv2.VideoWriter_fourcc(*'avc1')  # avc1 (H.264) более эффективен чем mp4v
+        # Используем настроенный кодек
+        fourcc = cv2.VideoWriter_fourcc(*VIDEO_CODEC)
+        logger.info(f"Using video codec: {VIDEO_CODEC}")
         new_video = cv2.VideoWriter(
             video_data["output_video_path"], 
             fourcc, 
@@ -705,10 +763,11 @@ def process_video_mobile(video_data, progress_callback=None):
             (int(output_width), int(output_height))
         )
         
-        # Настраиваем параметры кодека для лучшей производительности
+        # Настраиваем параметры кодека для оптимального сжатия
         if hasattr(new_video, 'set'):
+            # Устанавливаем качество (0-100, где 100 - лучшее качество)
             new_video.set(cv2.VIDEOWRITER_PROP_QUALITY, VIDEO_QUALITY)
-            logger.info(f"Set video quality to: {VIDEO_QUALITY}%")
+            logger.info(f"Set video quality to: {VIDEO_QUALITY}% with mp4v codec")
 
         filter_matrices = video_data["filters"]
         filter_indices = video_data["filter_indices"]
@@ -779,6 +838,38 @@ def process_video_mobile(video_data, progress_callback=None):
 
         cap.release()
         new_video.release()
+        
+        # Оптимизируем видео через ffmpeg для лучшего сжатия (если включено)
+        if ENABLE_FFMPEG_OPTIMIZATION:
+            optimized_path = video_data["output_video_path"].replace('.mp4', '_optimized.mp4')
+            try:
+                import subprocess
+                import os
+                # Используем ffmpeg для оптимизации сжатия с битрейтом оригинального видео
+                original_bitrate = video_data.get("original_bitrate", 2800000)  # 2.8 Mbps по умолчанию
+                original_audio_bitrate = video_data.get("original_audio_bitrate", 75000)  # 75 kbps по умолчанию
+                
+                cmd = [
+                    'ffmpeg', '-y', '-i', video_data["output_video_path"],
+                    '-c:v', 'libx264', '-preset', 'ultrafast', 
+                    '-b:v', f'{original_bitrate}',  # Используем битрейт оригинального видео
+                    '-maxrate', f'{original_bitrate}', '-bufsize', f'{original_bitrate * 2}',
+                    '-c:a', 'aac', '-b:a', f'{original_audio_bitrate}',
+                    '-movflags', '+faststart',
+                    '-threads', '2',  # Используем 2 потока для ускорения
+                    optimized_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if result.returncode == 0 and os.path.exists(optimized_path):
+                    # Заменяем оригинальный файл оптимизированным
+                    os.replace(optimized_path, video_data["output_video_path"])
+                    logger.info("Video optimized with ffmpeg for better compression")
+                else:
+                    logger.warning(f"FFmpeg optimization failed: {result.stderr}")
+            except Exception as e:
+                logger.warning(f"Could not optimize video with ffmpeg: {e}")
+        else:
+            logger.info("FFmpeg optimization disabled - using original file")
         
         return {
             "status": "success",

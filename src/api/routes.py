@@ -289,7 +289,9 @@ async def configure_performance_endpoint(
     batch_size: int = None,
     max_processes: int = None,
     video_quality: int = None,
-    use_gpu: bool = None
+    use_gpu: bool = None,
+    enable_ffmpeg_optimization: bool = None,
+    video_codec: str = None
 ):
     """Настройка параметров производительности"""
     try:
@@ -297,7 +299,9 @@ async def configure_performance_endpoint(
             batch_size=batch_size,
             max_processes=max_processes,
             video_quality=video_quality,
-            use_gpu=use_gpu
+            use_gpu=use_gpu,
+            enable_ffmpeg_optimization=enable_ffmpeg_optimization,
+            video_codec=video_codec
         )
         
         return {

@@ -31,7 +31,11 @@ class VideoProcessor:
     def _get_output_path(self, filename: str, suffix: str = "_corrected") -> str:
         """Генерирует путь для выходного файла"""
         name, ext = os.path.splitext(filename)
-        return os.path.join(self.output_dir, f"{name}{suffix}{ext}")
+        
+        # Используем .mp4 для всех поддерживаемых кодеков
+        output_ext = '.mp4'
+            
+        return os.path.join(self.output_dir, f"{name}{suffix}{output_ext}")
     
     async def process_image(self, file: UploadFile) -> Dict[str, Any]:
         """Обрабатывает изображение для мобильного API"""
