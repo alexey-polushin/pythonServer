@@ -31,6 +31,10 @@ class Settings:
     
     # CORS
     ALLOWED_ORIGINS: list = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+    
+    # File upload settings
+    MAX_FILE_SIZE: int = int(os.getenv("MAX_FILE_SIZE", 500 * 1024 * 1024))  # 500MB
+    UPLOAD_TIMEOUT: int = int(os.getenv("UPLOAD_TIMEOUT", 300))  # 5 minutes
 
 settings = Settings()
 

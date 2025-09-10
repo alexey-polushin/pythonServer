@@ -26,5 +26,7 @@ if __name__ == "__main__":
         host=host,
         port=port,
         reload=True,
-        log_level="info"
+        log_level="info",
+        timeout_keep_alive=300,
+        limit_max_requests=1000
     )

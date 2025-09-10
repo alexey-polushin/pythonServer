@@ -280,6 +280,53 @@ else
     print_warning "API не отвечает"
 fi
 
+# Проверяем настройки больших файлов
+print_info "Проверяем настройки больших файлов..."
+NGINX_CONFIG=$(run_remote "grep -c 'client_max_body_size 500M' /etc/nginx/sites-available/video-server" "")
+if [ "$NGINX_CONFIG" -gt 0 ]; then
+    print_status "Nginx настроен для файлов до 500MB"
+else
+    print_warning "Nginx не настроен для больших файлов - обновляем конфигурацию"
+    run_remote "cat > /etc/nginx/sites-available/video-server << 'EOF'
+# Настройки для больших файлов
+client_max_body_size 500M;
+client_body_timeout 300s;
+client_header_timeout 300s;
+proxy_connect_timeout 300s;
+proxy_send_timeout 300s;
+proxy_read_timeout 300s;
+send_timeout 300s;
+
+upstream video_api {
+    server 127.0.0.1:8080;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        proxy_pass http://video_api;
+        proxy_set_header Host \\\$host;
+        proxy_set_header X-Real-IP \\\$remote_addr;
+        proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \\\$scheme;
+        
+        # Настройки для больших файлов
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_max_temp_file_size 0;
+    }
+
+    location /health {
+        proxy_pass http://video_api/health;
+        access_log off;
+    }
+}
+EOF" "Обновление конфигурации nginx"
+    run_remote "nginx -t && systemctl reload nginx" "Перезагрузка nginx"
+fi
+
 # Показываем информацию об обновлении
 echo ""
 echo "🎉 ОБНОВЛЕНИЕ КОДА ЗАВЕРШЕНО!"

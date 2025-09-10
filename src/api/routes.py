@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request
 from fastapi.responses import StreamingResponse, FileResponse
 import logging
 from datetime import datetime
@@ -8,10 +8,19 @@ import json
 from ..models.schemas import HealthResponse
 from ..services.video_processor import video_processor
 from ..dive_color_corrector.mobile_correct import configure_performance, get_performance_info
+from ..config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+async def check_file_size(file: UploadFile) -> None:
+    """Проверка размера загружаемого файла"""
+    if hasattr(file, 'size') and file.size and file.size > settings.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413, 
+            detail=f"File too large. Maximum size allowed: {settings.MAX_FILE_SIZE // (1024*1024)}MB"
+        )
 
 
 @router.get("/", response_model=HealthResponse)
@@ -154,6 +163,9 @@ async def mobile_process_image(file: UploadFile = File(...)):
     if not file.content_type or not file.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="File must be an image")
     
+    # Проверяем размер файла
+    await check_file_size(file)
+    
     try:
         result = await video_processor.process_image(file)
         return {
@@ -172,6 +184,9 @@ async def mobile_process_video(file: UploadFile = File(...)):
     """Обработка видео для мобильного клиента"""
     if not file.content_type or not file.content_type.startswith('video/'):
         raise HTTPException(status_code=400, detail="File must be a video")
+    
+    # Проверяем размер файла
+    await check_file_size(file)
     
     try:
         # Очищаем все старые файлы перед обработкой нового

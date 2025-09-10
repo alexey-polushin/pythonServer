@@ -17,6 +17,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Настройки для больших файлов
+# app.router.default_response_class = None  # Закомментировано из-за ошибки
+
 # CORS настройки
 app.add_middleware(
     CORSMiddleware,
@@ -40,5 +43,7 @@ if __name__ == "__main__":
         host=host,
         port=port,
         reload=True,
-        log_level="info"
+        log_level="info",
+        timeout_keep_alive=300,
+        limit_max_requests=1000
     )
