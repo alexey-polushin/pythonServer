@@ -39,8 +39,6 @@ nano server_config.json
 - `server.auth_method` - метод аутентификации: `"password"` или `"key"`
 - `server.password` - пароль для SSH подключения (если используется `auth_method: "password"`)
 - `server.ssh_key_path` - путь к приватному SSH ключу (если используется `auth_method: "key"`)
-- `deployment.app_name` - имя приложения (используется для systemd сервиса, по умолчанию "dive-color-corrector")
-- `deployment.app_port` - порт для API (по умолчанию 80)
 
 **Примеры конфигурации:**
 
@@ -52,10 +50,6 @@ nano server_config.json
     "username": "root",
     "auth_method": "password",
     "password": "your-password"
-  },
-  "deployment": {
-    "app_name": "dive-color-corrector",
-    "app_port": 80
   }
 }
 ```
@@ -68,10 +62,6 @@ nano server_config.json
     "username": "root",
     "auth_method": "key",
     "ssh_key_path": "/home/user/.ssh/id_rsa"
-  },
-  "deployment": {
-    "app_name": "dive-color-corrector",
-    "app_port": 80
   }
 }
 ```
@@ -92,10 +82,10 @@ scp scripts/deploy_universal.sh root@your-server:/tmp/
 ssh root@your-server "chmod +x /tmp/deploy_universal.sh && /tmp/deploy_universal.sh"
 
 # Скопировать файлы проекта
-scp -r . root@your-server:/opt/python-api-server/
+scp -r . root@your-server:/opt/dive-color-corrector/
 
 # Запустить сервис
-ssh root@your-server "systemctl start python-api-server.service"
+ssh root@your-server "systemctl start dive-color-corrector.service"
 ```
 
 ### Локальная разработка
@@ -105,7 +95,7 @@ pip install -r src/requirements.txt
 python app.py
 ```
 
-Сервер будет доступен по адресу: http://localhost:8000
+Сервер будет доступен по адресу: http://localhost
 
 ## 📚 API Endpoints
 
@@ -137,12 +127,12 @@ python app.py
 ### Основные команды
 ```bash
 # Статус сервиса
-sudo systemctl status python-api-server.service
+sudo systemctl status dive-color-corrector.service
 
 # Запуск/остановка/перезапуск
-sudo systemctl start python-api-server.service
-sudo systemctl stop python-api-server.service
-sudo systemctl restart python-api-server.service
+sudo systemctl start dive-color-corrector.service
+sudo systemctl stop dive-color-corrector.service
+sudo systemctl restart dive-color-corrector.service
 ```
 
 ### Мониторинг

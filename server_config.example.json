@@ -5,11 +5,6 @@
     "username": "root",
     "auth_method": "password",
     "password": "your-server-password",
-    "ssh_key_path": "/path/to/your/private/key",
-    "os": "debian"
-  },
-  "deployment": {
-    "app_name": "dive-color-corrector",
-    "app_port": 80
+    "ssh_key_path": "/path/to/your/private/key"
   }
 }

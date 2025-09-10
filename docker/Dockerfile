@@ -32,16 +32,20 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 COPY app.py .
 
+# Создаем пользователя для безопасности
+RUN useradd --create-home --shell /bin/bash app
+
 # Создаем директории для загрузок и выходных файлов
 RUN mkdir -p /app/uploads /app/outputs
 
-# Создаем пользователя для безопасности
-RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
+# Устанавливаем права доступа
+RUN chown -R app:app /app
+
+# Переключаемся на пользователя app
 USER app
 
 # Открываем порт
-EXPOSE 8000
+EXPOSE 8080
 
-# Упрощенная команда для стабильной работы
-CMD ["gunicorn", "app:app", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "60", "--max-requests", "1000", "--preload"]
+# Команда запуска (теперь безопасно от пользователя app)
+CMD ["gunicorn", "app:app", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8080", "--timeout", "60", "--max-requests", "1000", "--preload"]

@@ -170,14 +170,14 @@ def prepare_docker_files(host: str, username: str, auth_method: str, password: s
 def deploy_to_server(config: Dict[str, Any]) -> bool:
     """Основная функция развертывания"""
     server_config = config["server"]
-    deployment_config = config["deployment"]
+    deployment_config = config.get("deployment", {})
     
     host = server_config["host"]
     username = server_config["username"]
     auth_method = server_config.get("auth_method", "password")
     password = server_config.get("password")
     ssh_key_path = server_config.get("ssh_key_path")
-    app_name = deployment_config["app_name"]
+    app_name = deployment_config.get("app_name", "dive-color-corrector")
     
     print(f"🚀 Начинаем развертывание {app_name} на {host}")
     print(f"🔐 Метод аутентификации: {auth_method}")
@@ -228,7 +228,7 @@ def deploy_to_server(config: Dict[str, Any]) -> bool:
     
     # Проверяем доступность API
     print("🌐 Проверяем доступность API...")
-    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"curl -f http://localhost:{deployment_config['app_port']}/health"):
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"curl -f http://localhost/health"):
         print("⚠️ API может быть недоступен, но контейнеры запущены")
     
     # Запускаем systemd сервис
@@ -239,13 +239,13 @@ def deploy_to_server(config: Dict[str, Any]) -> bool:
     # Финальная проверка
     print("🔍 Финальная проверка...")
     time.sleep(10)
-    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"curl -f http://localhost:{deployment_config['app_port']}/health"):
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"curl -f http://localhost/health"):
         print("⚠️ API недоступен после запуска systemd сервиса")
     
     print("🎉 Развертывание завершено!")
-    print(f"🌐 API доступен по адресу: http://{host}:{deployment_config['app_port']}")
-    print(f"📚 Документация API: http://{host}:{deployment_config['app_port']}/docs")
-    print(f"📱 Мобильный API: http://{host}:{deployment_config['app_port']}/api/mobile/status")
+    print(f"🌐 API доступен по адресу: http://{host}")
+    print(f"📚 Документация API: http://{host}/docs")
+    print(f"📱 Мобильный API: http://{host}/api/mobile/status")
     
     return True
 
@@ -268,7 +268,7 @@ def main():
     config = load_config(config_path)
     
     # Проверяем необходимые поля
-    required_fields = ["server.host", "server.username", "server.password", "deployment.app_name"]
+    required_fields = ["server.host", "server.username", "server.password"]
     for field in required_fields:
         keys = field.split(".")
         current = config

@@ -68,7 +68,6 @@ if command -v ufw &> /dev/null; then
     ufw allow 22
     ufw allow 80
     ufw allow 443
-    ufw allow 8000
     echo "✅ Файрвол настроен"
 else
     echo "⚠️ ufw не найден, устанавливаем..."
@@ -77,21 +76,20 @@ else
     ufw allow 22
     ufw allow 80
     ufw allow 443
-    ufw allow 8000
     echo "✅ Файрвол установлен и настроен"
 fi
 
 # Создание директории для проекта
 echo "📁 Создаем директорию проекта..."
-mkdir -p /opt/python-api-server
-cd /opt/python-api-server
+mkdir -p /opt/dive-color-corrector
+cd /opt/dive-color-corrector
 
 # Создание .env файла если не существует
 if [ ! -f .env ]; then
     echo "⚙️ Создаем .env файл..."
     cat > .env << EOF
 HOST=0.0.0.0
-PORT=8000
+PORT=8080
 DEBUG=False
 SECRET_KEY=$(openssl rand -hex 32)
 API_TOKEN=$(openssl rand -hex 32)
@@ -113,14 +111,14 @@ mkdir -p uploads outputs logs
 
 # Создание systemd сервиса для автоматического запуска
 echo "🔧 Создаем systemd сервис..."
-cat > /etc/systemd/system/python-api-server.service << EOF
+cat > /etc/systemd/system/dive-color-corrector.service << EOF
 [Unit]
 Description=Python API Server with Dive Color Corrector
 After=network.target
 
 [Service]
 User=root
-WorkingDirectory=/opt/python-api-server
+WorkingDirectory=/opt/dive-color-corrector
 ExecStart=/usr/local/bin/docker-compose up -d
 ExecStop=/usr/local/bin/docker-compose down
 Restart=always
@@ -132,18 +130,18 @@ EOF
 
 # Перезагрузка systemd и включение сервиса
 systemctl daemon-reload
-systemctl enable python-api-server.service
+systemctl enable dive-color-corrector.service
 
 # Создание скрипта для обновления
 echo "📝 Создаем скрипт обновления..."
-cat > /opt/python-api-server/update.sh << 'EOF'
+cat > /opt/dive-color-corrector/update.sh << 'EOF'
 #!/bin/bash
 set -e
 
 echo "🔄 Обновляем Python API Server..."
 
 # Остановка сервиса
-systemctl stop python-api-server.service
+systemctl stop dive-color-corrector.service
 
 # Создание бэкапа
 if [ -d "backup" ]; then
@@ -164,16 +162,16 @@ fi
 docker-compose up -d --build
 
 # Запуск сервиса
-systemctl start python-api-server.service
+systemctl start dive-color-corrector.service
 
 echo "✅ Обновление завершено!"
 EOF
 
-chmod +x /opt/python-api-server/update.sh
+chmod +x /opt/dive-color-corrector/update.sh
 
 # Создание скрипта для мониторинга
 echo "📊 Создаем скрипт мониторинга..."
-cat > /opt/python-api-server/monitor.sh << 'EOF'
+cat > /opt/dive-color-corrector/monitor.sh << 'EOF'
 #!/bin/bash
 
 echo "📊 Статус Python API Server:"
@@ -181,7 +179,7 @@ echo "================================"
 
 # Статус systemd сервиса
 echo "🔧 Systemd сервис:"
-systemctl status python-api-server.service --no-pager -l
+systemctl status dive-color-corrector.service --no-pager -l
 
 echo ""
 echo "🐳 Docker контейнеры:"
@@ -189,7 +187,7 @@ docker-compose ps
 
 echo ""
 echo "💾 Использование диска:"
-df -h /opt/python-api-server
+df -h /opt/dive-color-corrector
 
 echo ""
 echo "🧠 Использование памяти:"
@@ -201,14 +199,14 @@ du -sh uploads outputs logs 2>/dev/null || echo "Директории не на�
 
 echo ""
 echo "🌐 Проверка доступности API:"
-if curl -f http://localhost:8000/health > /dev/null 2>&1; then
+if curl -f http://localhost/health > /dev/null 2>&1; then
     echo "✅ API доступен"
 else
     echo "❌ API недоступен"
 fi
 EOF
 
-chmod +x /opt/python-api-server/monitor.sh
+chmod +x /opt/dive-color-corrector/monitor.sh
 
 # Создание скрипта для очистки диска (мягкая версия)
 echo "🧹 Создаем скрипт очистки диска..."
@@ -288,23 +286,23 @@ echo "0 3 * * 0 /opt/disk_cleanup.sh >> /var/log/disk_cleanup.log 2>&1" | cronta
 echo "🎉 Настройка системы завершена!"
 echo ""
 echo "📋 Следующие шаги:"
-echo "1. Скопируйте файлы проекта в /opt/python-api-server/"
-echo "2. Запустите: systemctl start python-api-server.service"
-echo "3. Проверьте статус: /opt/python-api-server/monitor.sh"
+echo "1. Скопируйте файлы проекта в /opt/dive-color-corrector/"
+echo "2. Запустите: systemctl start dive-color-corrector.service"
+echo "3. Проверьте статус: /opt/dive-color-corrector/monitor.sh"
 echo ""
 echo "🔧 Полезные команды:"
-echo "  systemctl status python-api-server.service  # Статус сервиса"
-echo "  systemctl start python-api-server.service   # Запуск сервиса"
-echo "  systemctl stop python-api-server.service    # Остановка сервиса"
-echo "  systemctl restart python-api-server.service # Перезапуск сервиса"
-echo "  /opt/python-api-server/monitor.sh           # Мониторинг API"
-echo "  /opt/python-api-server/update.sh            # Обновление"
+echo "  systemctl status dive-color-corrector.service  # Статус сервиса"
+echo "  systemctl start dive-color-corrector.service   # Запуск сервиса"
+echo "  systemctl stop dive-color-corrector.service    # Остановка сервиса"
+echo "  systemctl restart dive-color-corrector.service # Перезапуск сервиса"
+echo "  /opt/dive-color-corrector/monitor.sh           # Мониторинг API"
+echo "  /opt/dive-color-corrector/update.sh            # Обновление"
 echo "  /opt/disk_cleanup.sh                        # Мягкая очистка диска"
 echo "  /opt/check_disk.sh                          # Мониторинг диска"
 echo ""
-echo "🌐 После запуска API будет доступен по адресу: http://$(curl -s ifconfig.me):8000"
-echo "📚 Документация API: http://$(curl -s ifconfig.me):8000/docs"
-echo "📱 Мобильный API: http://$(curl -s ifconfig.me):8000/api/mobile/status"
+echo "🌐 После запуска API будет доступен по адресу: http://$(curl -s ifconfig.me)"
+echo "📚 Документация API: http://$(curl -s ifconfig.me)/docs"
+echo "📱 Мобильный API: http://$(curl -s ifconfig.me)/api/mobile/status"
 echo ""
 echo "✨ Особенности версии:"
 echo "  🚀 Подходит для Debian и Ubuntu"
