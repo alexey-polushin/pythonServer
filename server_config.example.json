@@ -1,17 +1,17 @@
 {
   "server": {
-    "host": "your-server-ip",
+    "host": "ВАШ_IP_СЕРВЕРА",
     "port": 22,
     "username": "root",
     "auth_method": "password",
-    "password": "your-password",
+    "password": "ВАШ_ПАРОЛЬ",
     "ssh_key_path": "/path/to/your/private/key",
     "os": "debian"
   },
   "deployment": {
     "app_name": "python-api-server",
     "app_port": 8000,
-    "domain": "your-server-ip",
+    "domain": "ВАШ_IP_СЕРВЕРА",
     "ssl_enabled": false,
     "firewall_ports": [22, 80, 443, 8000]
   },

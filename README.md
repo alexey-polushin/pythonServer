@@ -26,6 +26,8 @@ cp server_config.example.json server_config.json
 nano server_config.json
 ```
 
+> ⚠️ **Безопасность**: Файл `server_config.json` содержит конфиденциальные данные и исключен из git. См. [SECURITY.md](SECURITY.md) для подробностей.
+
 📋 **Подробные инструкции:** [CONFIG_SETUP.md](CONFIG_SETUP.md)
 
 ### Автоматическое развертывание на Debian
@@ -112,6 +114,9 @@ sudo systemctl restart python-api-server.service
 ## 📚 Документация
 
 - **Подробное развертывание:** [DEPLOYMENT_OPTIMIZED.md](DEPLOYMENT_OPTIMIZED.md)
+- **Устранение проблем:** [DEPLOYMENT_TROUBLESHOOTING.md](DEPLOYMENT_TROUBLESHOOTING.md)
+- **Быстрое развертывание:** [QUICK_DEPLOY.md](QUICK_DEPLOY.md)
+- **Безопасность:** [SECURITY.md](SECURITY.md)
 - **История изменений:** [CHANGELOG.md](CHANGELOG.md)
 - **API документация:** http://your-server:8000/docs
 

@@ -1,10 +1,14 @@
 import os
-from dotenv import load_dotenv
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-# Загружаем переменные окружения
-load_dotenv()
+# Пытаемся загрузить переменные окружения из .env файла (если существует)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv не установлен, используем только переменные окружения системы
+    pass
 
 class Settings:
     # Server settings

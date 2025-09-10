@@ -2,6 +2,8 @@ import numpy as np
 import cv2
 import math
 import logging
+import subprocess
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +12,108 @@ MIN_AVG_RED = 60
 MAX_HUE_SHIFT = 120
 BLUE_MAGIC_VALUE = 1.2
 SAMPLE_SECONDS = 2
+
+def get_video_rotation(video_path):
+    """Определяет угол поворота видео из метаданных"""
+    logger.info(f"Analyzing video rotation for: {video_path}")
+    
+    try:
+        # Сначала пробуем ffprobe для получения метаданных
+        cmd = [
+            'ffprobe', '-v', 'quiet', '-print_format', 'json', 
+            '-show_streams', '-select_streams', 'v:0', video_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            logger.info(f"ffprobe raw output: {result.stdout[:500]}...")  # Первые 500 символов
+            
+            if 'streams' in data and len(data['streams']) > 0:
+                stream = data['streams'][0]
+                logger.info(f"Stream data keys: {list(stream.keys())}")
+                
+                # Проверяем различные поля для определения поворота
+                rotation = 0
+                if 'tags' in stream:
+                    logger.info(f"Stream tags: {stream['tags']}")
+                    if 'rotate' in stream['tags']:
+                        rotation = int(stream['tags']['rotate'])
+                        logger.info(f"Found rotation in tags: {rotation} degrees")
+                
+                if 'side_data_list' in stream:
+                    logger.info(f"Side data list: {stream['side_data_list']}")
+                    for side_data in stream['side_data_list']:
+                        if side_data.get('side_data_type') == 'Display Matrix':
+                            matrix = side_data.get('displaymatrix', '')
+                            logger.info(f"Display matrix: {matrix}")
+                            if '90' in matrix:
+                                rotation = 90
+                            elif '180' in matrix:
+                                rotation = 180
+                            elif '270' in matrix:
+                                rotation = 270
+                
+                # Получаем размеры видео
+                width = stream.get('width', 0)
+                height = stream.get('height', 0)
+                logger.info(f"Video dimensions from ffprobe: {width}x{height}")
+                
+            logger.info(f"Final detected rotation via ffprobe: {rotation} degrees")
+            
+            # Проверяем портретную ориентацию даже если ffprobe показывает 0°
+            if rotation == 0 and height > width:
+                logger.info("ffprobe shows 0° but video appears to be PORTRAIT - applying auto-correction")
+                logger.info("Auto-correcting portrait video with 90-degree rotation")
+                return 90
+            
+            return rotation
+    except Exception as e:
+        logger.warning(f"Could not detect video rotation via ffprobe: {str(e)}")
+    
+    # Альтернативный способ через OpenCV (если ffprobe недоступен)
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if cap.isOpened():
+            width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+            height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            cap.release()
+            
+            logger.info(f"Video dimensions from OpenCV: {width}x{height}")
+            logger.info(f"Video aspect ratio: {height/width if width > 0 else 'unknown'}")
+            
+            if height > width:
+                logger.info("Video appears to be in PORTRAIT orientation")
+                logger.info("Auto-correcting portrait video with 90-degree rotation")
+                return 90
+            else:
+                logger.info("Video appears to be in LANDSCAPE orientation")
+            
+            return 0
+    except Exception as e:
+        logger.warning(f"Could not analyze video with OpenCV: {str(e)}")
+    
+    return 0
+
+def apply_rotation(frame, rotation_angle):
+    """Применяет поворот к кадру"""
+    if rotation_angle == 0:
+        return frame
+    
+    if rotation_angle == 90:
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    elif rotation_angle == 180:
+        return cv2.rotate(frame, cv2.ROTATE_180)
+    elif rotation_angle == 270:
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    
+    return frame
+
+def get_rotated_dimensions(width, height, rotation_angle):
+    """Возвращает размеры после поворота"""
+    if rotation_angle in [90, 270]:
+        return height, width
+    return width, height
 
 def hue_shift_red(mat, h):
     """Сдвиг оттенка красного канала"""
@@ -126,8 +230,14 @@ def correct_image_mobile(input_path, output_path):
         mat = cv2.imread(input_path)
         if mat is None:
             raise ValueError(f"Не удалось загрузить изображение: {input_path}")
+        
+        # Определяем поворот изображения (для изображений обычно 0, но может быть полезно)
+        rotation_angle = 0  # Для изображений поворот обычно не применяется
             
-        rgb_mat = cv2.cvtColor(mat, cv2.COLOR_BGR2RGB)
+        # Применяем поворот если необходимо
+        rotated_mat = apply_rotation(mat, rotation_angle)
+            
+        rgb_mat = cv2.cvtColor(rotated_mat, cv2.COLOR_BGR2RGB)
         filter_matrix = get_filter_matrix(rgb_mat)
         corrected_mat = apply_filter(rgb_mat, filter_matrix)
         corrected_mat = cv2.cvtColor(corrected_mat, cv2.COLOR_RGB2BGR)
@@ -140,7 +250,8 @@ def correct_image_mobile(input_path, output_path):
             "status": "success",
             "input_path": input_path,
             "output_path": output_path,
-            "message": "Image processed successfully"
+            "message": "Image processed successfully",
+            "rotation_applied": rotation_angle
         }
         
     except Exception as e:
@@ -153,6 +264,9 @@ def correct_image_mobile(input_path, output_path):
 def analyze_video_mobile(input_video_path, output_video_path, progress_callback=None):
     """Анализирует видео для мобильного API"""
     try:
+        # Определяем поворот видео
+        rotation_angle = get_video_rotation(input_video_path)
+        
         cap = cv2.VideoCapture(input_video_path)
         if not cap.isOpened():
             raise ValueError(f"Не удалось открыть видео: {input_video_path}")
@@ -178,9 +292,15 @@ def analyze_video_mobile(input_video_path, output_video_path, progress_callback=
 
             # Выбираем матрицу фильтра каждые N секунд
             if count % (fps * SAMPLE_SECONDS) == 0:
-                mat = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                filter_matrix_indexes.append(count) 
-                filter_matrices.append(get_filter_matrix(mat))
+                try:
+                    # Применяем поворот к кадру перед анализом
+                    rotated_frame = apply_rotation(frame, rotation_angle)
+                    mat = cv2.cvtColor(rotated_frame, cv2.COLOR_BGR2RGB)
+                    filter_matrix_indexes.append(count) 
+                    filter_matrices.append(get_filter_matrix(mat))
+                except Exception as e:
+                    logger.warning(f"Ошибка при обработке кадра {count}: {str(e)}")
+                    continue
                 
                 if progress_callback:
                     progress_callback({
@@ -192,6 +312,10 @@ def analyze_video_mobile(input_video_path, output_video_path, progress_callback=
         
         cap.release()
 
+        # Проверяем, что мы получили хотя бы одну матрицу фильтра
+        if not filter_matrices:
+            raise ValueError("Не удалось получить ни одного кадра для анализа. Проверьте корректность видеофайла.")
+        
         filter_matrices = np.array(filter_matrices)
         
         return {
@@ -200,7 +324,8 @@ def analyze_video_mobile(input_video_path, output_video_path, progress_callback=
             "fps": fps,
             "frame_count": count,
             "filters": filter_matrices,
-            "filter_indices": filter_matrix_indexes
+            "filter_indices": filter_matrix_indexes,
+            "rotation_angle": rotation_angle
         }
         
     except Exception as e:
@@ -216,19 +341,30 @@ def process_video_mobile(video_data, progress_callback=None):
 
         frame_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
         frame_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        
+        # Получаем угол поворота из данных анализа
+        rotation_angle = video_data.get("rotation_angle", 0)
+        logger.info(f"Processing video with rotation angle: {rotation_angle} degrees")
+        logger.info(f"Original video dimensions: {frame_width}x{frame_height}")
+        
+        # Определяем размеры после поворота
+        output_width, output_height = get_rotated_dimensions(frame_width, frame_height, rotation_angle)
+        logger.info(f"Output video dimensions after rotation: {output_width}x{output_height}")
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         new_video = cv2.VideoWriter(
             video_data["output_video_path"], 
             fourcc, 
             video_data["fps"], 
-            (int(frame_width), int(frame_height))
+            (int(output_width), int(output_height))
         )
 
         filter_matrices = video_data["filters"]
         filter_indices = video_data["filter_indices"]
 
         def get_interpolated_filter_matrix(frame_number):
+            if len(filter_matrices) == 0:
+                raise ValueError("Нет доступных матриц фильтра для интерполяции")
             return [np.interp(frame_number, filter_indices, filter_matrices[..., x]) for x in range(len(filter_matrices[0]))]
 
         logger.info("Starting video processing...")
@@ -248,8 +384,11 @@ def process_video_mobile(video_data, progress_callback=None):
                     break
                 continue
 
+            # Применяем поворот к кадру
+            rotated_frame = apply_rotation(frame, rotation_angle)
+            
             # Применяем фильтр
-            rgb_mat = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            rgb_mat = cv2.cvtColor(rotated_frame, cv2.COLOR_BGR2RGB)
             interpolated_filter_matrix = get_interpolated_filter_matrix(count)
             corrected_mat = apply_filter(rgb_mat, interpolated_filter_matrix)
             corrected_mat = cv2.cvtColor(corrected_mat, cv2.COLOR_RGB2BGR)
@@ -271,7 +410,10 @@ def process_video_mobile(video_data, progress_callback=None):
         return {
             "status": "success",
             "output_path": video_data["output_video_path"],
-            "message": "Video processed successfully"
+            "message": "Video processed successfully",
+            "rotation_applied": rotation_angle,
+            "original_dimensions": (int(frame_width), int(frame_height)),
+            "output_dimensions": (int(output_width), int(output_height))
         }
         
     except Exception as e:

@@ -43,11 +43,14 @@ docker-logs: ## Показать логи Docker контейнеров
 run: ## Запустить приложение локально
 	python app.py
 
-deploy: ## Развернуть на сервере
-	python scripts/deploy_with_config.py
+deploy: ## Развернуть на сервере (улучшенная версия)
+	python scripts/deploy_improved.py
 
-deploy-debian: ## Развернуть на Debian сервере
-	python scripts/deploy_with_config.py server_config.json
+deploy-debian: ## Развернуть на Debian сервере (улучшенная версия)
+	python scripts/deploy_improved.py server_config.json
+
+deploy-legacy: ## Развернуть на сервере (старая версия)
+	python scripts/deploy_with_config.py
 
 deploy-local: ## Развернуть локально с Docker
 	cd docker && docker-compose up -d --build
@@ -111,3 +114,17 @@ local-monitor: ## Проверить состояние локальной си�
 	@echo ""
 	@echo "📈 Нагрузка:"
 	@uptime
+
+deploy-troubleshoot: ## Диагностика проблем развертывания
+	@echo "🔍 Диагностика проблем развертывания..."
+	@echo "1. Проверяем SSH ключи..."
+	@echo "   Запустите: ssh-keygen -R ВАШ_IP_СЕРВЕРА"
+	@echo "2. Проверяем sshpass..."
+	@which sshpass || echo "sshpass не установлен. Установите: brew install hudochenkov/sshpass/sshpass"
+	@echo "3. Проверяем конфигурацию..."
+	@if [ -f server_config.json ]; then echo "✅ server_config.json найден"; else echo "❌ server_config.json не найден"; fi
+	@echo "4. Проверяем Docker файлы..."
+	@if [ -f docker/docker-compose.yml ]; then echo "✅ docker-compose.yml найден"; else echo "❌ docker-compose.yml не найден"; fi
+	@if [ -f docker/Dockerfile ]; then echo "✅ Dockerfile найден"; else echo "❌ Dockerfile не найден"; fi
+	@echo "5. Проверяем улучшенный скрипт..."
+	@if [ -f scripts/deploy_improved.py ]; then echo "✅ deploy_improved.py найден"; else echo "❌ deploy_improved.py не найден"; fi

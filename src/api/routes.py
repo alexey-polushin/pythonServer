@@ -166,6 +166,62 @@ async def mobile_process_image(file: UploadFile = File(...)):
             "error": str(e)
         }
 
+@router.post("/api/mobile/process/video")
+async def mobile_process_video(file: UploadFile = File(...)):
+    """Обработка видео для мобильного клиента"""
+    if not file.content_type or not file.content_type.startswith('video/'):
+        raise HTTPException(status_code=400, detail="File must be a video")
+    
+    try:
+        # Очищаем все старые файлы перед обработкой нового
+        cleaned_files = video_processor.cleanup_all_files()
+        logger.info(f"Cleaned {len(cleaned_files)} old files before processing new video")
+        
+        # Сохраняем загруженный файл
+        input_path = video_processor._get_temp_path(file.filename)
+        output_path = video_processor._get_output_path(file.filename)
+        
+        with open(input_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        # Импортируем функции обработки
+        from ..dive_color_corrector.mobile_correct import analyze_video_mobile, process_video_mobile
+        
+        # Анализируем видео
+        video_data = analyze_video_mobile(input_path, output_path)
+        
+        # Обрабатываем видео
+        result = process_video_mobile(video_data)
+        
+        # Удаляем временный файл
+        os.remove(input_path)
+        
+        # Добавляем информацию о файле
+        result.update({
+            "input_filename": file.filename,
+            "output_filename": os.path.basename(output_path),
+            "file_size": os.path.getsize(output_path) if os.path.exists(output_path) else 0,
+            "cleaned_files_count": len(cleaned_files)
+        })
+        
+        return {
+            "success": True,
+            "data": result
+        }
+    except Exception as e:
+        logger.error(f"Error processing video: {str(e)}")
+        error_message = str(e)
+        if "index 0 is out of bounds" in error_message:
+            error_message = "Ошибка обработки видео: не удалось проанализировать видеофайл. Проверьте корректность файла."
+        elif "Не удалось получить ни одного кадра" in error_message:
+            error_message = "Ошибка обработки видео: не удалось прочитать кадры из видеофайла. Проверьте формат и целостность файла."
+        
+        return {
+            "success": False,
+            "error": error_message
+        }
+
 @router.get("/api/mobile/files")
 async def mobile_list_files():
     """Список файлов для мобильного клиента"""
