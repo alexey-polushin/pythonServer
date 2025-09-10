@@ -4,14 +4,164 @@ import math
 import logging
 import subprocess
 import json
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+import multiprocessing as mp
+from functools import partial
 
 logger = logging.getLogger(__name__)
+
+# Проверяем доступность GPU
+GPU_AVAILABLE = False
+GPU_TYPE = None
+
+# Проверяем Apple Metal (MPS)
+try:
+    import torch
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        GPU_AVAILABLE = True
+        GPU_TYPE = "MPS"
+        logger.info("GPU acceleration available with Apple Metal (MPS)")
+    else:
+        logger.info("Apple Metal (MPS) not available")
+except ImportError:
+    logger.info("PyTorch not available for MPS")
+
+# Проверяем CUDA (если MPS недоступен)
+if not GPU_AVAILABLE:
+    try:
+        import cupy as cp
+        GPU_AVAILABLE = True
+        GPU_TYPE = "CUDA"
+        logger.info("GPU acceleration available with CuPy (CUDA)")
+    except ImportError:
+        logger.info("CuPy (CUDA) not available")
+
+if not GPU_AVAILABLE:
+    logger.info("GPU acceleration not available, using CPU only")
 
 THRESHOLD_RATIO = 2000
 MIN_AVG_RED = 60
 MAX_HUE_SHIFT = 120
 BLUE_MAGIC_VALUE = 1.2
 SAMPLE_SECONDS = 2
+
+# Параметры производительности
+BATCH_SIZE = 32  # Размер батча для обработки кадров
+MAX_PROCESSES = 4  # Максимальное количество процессов
+VIDEO_QUALITY = 60  # Качество выходного видео (0-100) - снижено для уменьшения размера
+USE_GPU = True  # Использовать GPU если доступен
+
+# Загружаем конфигурацию при импорте модуля
+def _load_performance_config():
+    """Загружает конфигурацию производительности"""
+    global BATCH_SIZE, MAX_PROCESSES, VIDEO_QUALITY, USE_GPU
+    
+    try:
+        import os
+        import json
+        
+        config_file = os.path.join(os.path.dirname(__file__), '..', '..', 'performance_config.json')
+        
+        if os.path.exists(config_file):
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+                
+            BATCH_SIZE = config.get('batch_size', BATCH_SIZE)
+            MAX_PROCESSES = config.get('max_processes', MAX_PROCESSES)
+            VIDEO_QUALITY = config.get('video_quality', VIDEO_QUALITY)
+            USE_GPU = config.get('use_gpu', USE_GPU) and GPU_AVAILABLE
+            
+            logger.info(f"Loaded performance config: batch_size={BATCH_SIZE}, max_processes={MAX_PROCESSES}, video_quality={VIDEO_QUALITY}, use_gpu={USE_GPU}")
+        else:
+            # Применяем оптимальную конфигурацию для системы
+            cpu_count = mp.cpu_count()
+            if cpu_count >= 8:
+                BATCH_SIZE = 64
+                MAX_PROCESSES = 6
+                VIDEO_QUALITY = 85
+            elif cpu_count >= 4:
+                BATCH_SIZE = 48
+                MAX_PROCESSES = 3
+                VIDEO_QUALITY = 80
+            else:
+                BATCH_SIZE = 32
+                MAX_PROCESSES = 2
+                VIDEO_QUALITY = 75
+            
+            USE_GPU = False  # По умолчанию отключаем GPU если нет конфигурации
+            logger.info(f"Applied optimal config for {cpu_count} cores: batch_size={BATCH_SIZE}, max_processes={MAX_PROCESSES}")
+            
+    except Exception as e:
+        logger.warning(f"Error loading performance config: {e}, using defaults")
+
+# Загружаем конфигурацию при импорте
+_load_performance_config()
+
+def _save_performance_config():
+    """Сохраняет текущую конфигурацию производительности в файл"""
+    try:
+        import os
+        import json
+        
+        config_file = os.path.join(os.path.dirname(__file__), '..', '..', 'performance_config.json')
+        
+        config = {
+            "batch_size": BATCH_SIZE,
+            "max_processes": MAX_PROCESSES,
+            "video_quality": VIDEO_QUALITY,
+            "use_gpu": USE_GPU,
+            "auto_configure": False
+        }
+        
+        with open(config_file, 'w') as f:
+            json.dump(config, f, indent=2)
+            
+        logger.info(f"Performance config saved to: {config_file}")
+        
+    except Exception as e:
+        logger.error(f"Error saving performance config: {e}")
+
+def configure_performance(batch_size=None, max_processes=None, video_quality=None, use_gpu=None):
+    """Настраивает параметры производительности"""
+    global BATCH_SIZE, MAX_PROCESSES, VIDEO_QUALITY, USE_GPU
+    
+    config_changed = False
+    
+    if batch_size is not None:
+        BATCH_SIZE = max(1, min(batch_size, 128))  # Ограничиваем от 1 до 128
+        logger.info(f"Batch size set to: {BATCH_SIZE}")
+        config_changed = True
+    
+    if max_processes is not None:
+        MAX_PROCESSES = max(1, min(max_processes, mp.cpu_count()))
+        logger.info(f"Max processes set to: {MAX_PROCESSES}")
+        config_changed = True
+    
+    if video_quality is not None:
+        VIDEO_QUALITY = max(1, min(video_quality, 100))  # Ограничиваем от 1 до 100
+        logger.info(f"Video quality set to: {VIDEO_QUALITY}%")
+        config_changed = True
+    
+    if use_gpu is not None:
+        USE_GPU = use_gpu and GPU_AVAILABLE
+        logger.info(f"GPU usage set to: {USE_GPU}")
+        config_changed = True
+    
+    # Сохраняем конфигурацию в файл если что-то изменилось
+    if config_changed:
+        _save_performance_config()
+
+def get_performance_info():
+    """Возвращает информацию о текущих настройках производительности"""
+    return {
+        "batch_size": BATCH_SIZE,
+        "max_processes": MAX_PROCESSES,
+        "video_quality": VIDEO_QUALITY,
+        "use_gpu": USE_GPU,
+        "gpu_available": GPU_AVAILABLE,
+        "gpu_type": GPU_TYPE,
+        "cpu_count": mp.cpu_count()
+    }
 
 def get_video_rotation(video_path):
     """Определяет угол поворота видео из метаданных"""
@@ -61,11 +211,12 @@ def get_video_rotation(video_path):
                 
             logger.info(f"Final detected rotation via ffprobe: {rotation} degrees")
             
-            # Проверяем портретную ориентацию даже если ffprobe показывает 0°
+            # НЕ применяем автоматический поворот для портретных видео
+            # Поворот должен определяться только из метаданных видео
             if rotation == 0 and height > width:
-                logger.info("ffprobe shows 0° but video appears to be PORTRAIT - applying auto-correction")
-                logger.info("Auto-correcting portrait video with 90-degree rotation")
-                return 90
+                logger.info("ffprobe shows 0° and video appears to be PORTRAIT")
+                logger.info("No rotation metadata found - keeping original orientation")
+                return 0
             
             return rotation
     except Exception as e:
@@ -84,8 +235,7 @@ def get_video_rotation(video_path):
             
             if height > width:
                 logger.info("Video appears to be in PORTRAIT orientation")
-                logger.info("Auto-correcting portrait video with 90-degree rotation")
-                return 90
+                logger.info("No rotation metadata found - keeping original orientation")
             else:
                 logger.info("Video appears to be in LANDSCAPE orientation")
             
@@ -141,37 +291,138 @@ def normalizing_interval(array):
 
     return (low, high)
 
+def apply_filter_gpu(mat, filt):
+    """Применяет фильтр к изображению с GPU ускорением"""
+    if not GPU_AVAILABLE:
+        return apply_filter_cpu(mat, filt)
+    
+    try:
+        if GPU_TYPE == "MPS":
+            return apply_filter_mps(mat, filt)
+        elif GPU_TYPE == "CUDA":
+            return apply_filter_cuda(mat, filt)
+        else:
+            return apply_filter_cpu(mat, filt)
+    except Exception as e:
+        logger.warning(f"GPU processing failed, falling back to CPU: {str(e)}")
+        return apply_filter_cpu(mat, filt)
+
+def apply_filter_mps(mat, filt):
+    """Применяет фильтр с Apple Metal (MPS) ускорением"""
+    import torch
+    
+    # Переносим данные на GPU
+    device = torch.device("mps")
+    mat_tensor = torch.from_numpy(mat.astype(np.float32)).to(device)
+    filt_tensor = torch.from_numpy(np.array(filt, dtype=np.float32)).to(device)
+    
+    # Применяем фильтр на GPU
+    filtered_mat = mat_tensor.clone()
+    
+    # Красный канал
+    filtered_mat[..., 0] = (mat_tensor[..., 0] * filt_tensor[0] + 
+                           mat_tensor[..., 1] * filt_tensor[1] + 
+                           mat_tensor[..., 2] * filt_tensor[2] + 
+                           filt_tensor[4] * 255)
+    
+    # Зеленый канал
+    filtered_mat[..., 1] = (mat_tensor[..., 1] * filt_tensor[6] + 
+                           filt_tensor[9] * 255)
+    
+    # Синий канал
+    filtered_mat[..., 2] = (mat_tensor[..., 2] * filt_tensor[12] + 
+                           filt_tensor[14] * 255)
+
+    # Обрезаем значения и конвертируем обратно в uint8
+    filtered_mat = torch.clamp(filtered_mat, 0, 255)
+    result = filtered_mat.cpu().numpy().astype(np.uint8)
+    
+    return result
+
+def apply_filter_cuda(mat, filt):
+    """Применяет фильтр с CUDA ускорением"""
+    import cupy as cp
+    
+    # Переносим данные на GPU
+    mat_gpu = cp.asarray(mat, dtype=cp.float32)
+    filt_gpu = cp.asarray(filt, dtype=cp.float32)
+    
+    # Применяем фильтр на GPU
+    filtered_mat_gpu = mat_gpu.copy()
+    
+    filtered_mat_gpu[..., 0] = (mat_gpu[..., 0] * filt_gpu[0] + 
+                               mat_gpu[..., 1] * filt_gpu[1] + 
+                               mat_gpu[..., 2] * filt_gpu[2] + 
+                               filt_gpu[4] * 255)
+    
+    filtered_mat_gpu[..., 1] = (mat_gpu[..., 1] * filt_gpu[6] + 
+                               filt_gpu[9] * 255)
+    
+    filtered_mat_gpu[..., 2] = (mat_gpu[..., 2] * filt_gpu[12] + 
+                               filt_gpu[14] * 255)
+
+    # Обрезаем значения и конвертируем обратно в uint8
+    cp.clip(filtered_mat_gpu, 0, 255, out=filtered_mat_gpu)
+    result = cp.asnumpy(filtered_mat_gpu.astype(cp.uint8))
+    
+    return result
+
+def apply_filter_cpu(mat, filt):
+    """Применяет фильтр к изображению на CPU (оптимизированная версия)"""
+    # Используем in-place операции для экономии памяти
+    filtered_mat = mat.astype(np.float32)
+    
+    # Применяем фильтр напрямую к массиву
+    filtered_mat[..., 0] = (mat[..., 0] * filt[0] + 
+                           mat[..., 1] * filt[1] + 
+                           mat[..., 2] * filt[2] + 
+                           filt[4] * 255)
+    
+    filtered_mat[..., 1] = (mat[..., 1] * filt[6] + 
+                           filt[9] * 255)
+    
+    filtered_mat[..., 2] = (mat[..., 2] * filt[12] + 
+                           filt[14] * 255)
+
+    # Обрезаем значения и конвертируем обратно в uint8
+    np.clip(filtered_mat, 0, 255, out=filtered_mat)
+    return filtered_mat.astype(np.uint8)
+
 def apply_filter(mat, filt):
-    """Применяет фильтр к изображению"""
-    r = mat[..., 0]
-    g = mat[..., 1]
-    b = mat[..., 2]
-
-    r = r * filt[0] + g*filt[1] + b*filt[2] + filt[4]*255
-    g = g * filt[6] + filt[9] * 255
-    b = b * filt[12] + filt[14] * 255
-
-    filtered_mat = np.dstack([r, g, b])
-    filtered_mat = np.clip(filtered_mat, 0, 255).astype(np.uint8)
-
-    return filtered_mat
+    """Применяет фильтр к изображению (автоматически выбирает GPU или CPU)"""
+    if USE_GPU and GPU_AVAILABLE:
+        return apply_filter_gpu(mat, filt)
+    else:
+        return apply_filter_cpu(mat, filt)
 
 def get_filter_matrix(mat):
-    """Получает матрицу фильтра для коррекции цветов"""
-    mat = cv2.resize(mat, (256, 256))
+    """Получает матрицу фильтра для коррекции цветов (оптимизированная версия)"""
+    # Используем более эффективное изменение размера
+    if mat.shape[:2] != (256, 256):
+        mat = cv2.resize(mat, (256, 256), interpolation=cv2.INTER_LINEAR)
 
-    # Получаем средние значения RGB
-    avg_mat = np.array(cv2.mean(mat)[:3], dtype=np.uint8)
+    # Получаем средние значения RGB более эффективно
+    avg_mat = np.mean(mat.reshape(-1, 3), axis=0).astype(np.uint8)
     
-    # Находим сдвиг оттенка для достижения MIN_AVG_RED
+    # Оптимизированный поиск сдвига оттенка
     new_avg_r = avg_mat[0]
     hue_shift = 0
-    while(new_avg_r < MIN_AVG_RED):
-        shifted = hue_shift_red(avg_mat, hue_shift)
-        new_avg_r = np.sum(shifted)
+    
+    # Предвычисляем константы для оптимизации
+    cos_h = math.cos(hue_shift * math.pi / 180)
+    sin_h = math.sin(hue_shift * math.pi / 180)
+    
+    while new_avg_r < MIN_AVG_RED and hue_shift <= MAX_HUE_SHIFT:
+        # Оптимизированное вычисление сдвига оттенка
+        shifted_r = (0.299 + 0.701 * cos_h + 0.168 * sin_h) * avg_mat[0]
+        shifted_g = (0.587 - 0.587 * cos_h + 0.330 * sin_h) * avg_mat[1]
+        shifted_b = (0.114 - 0.114 * cos_h - 0.497 * sin_h) * avg_mat[2]
+        new_avg_r = shifted_r + shifted_g + shifted_b
+        
         hue_shift += 1
-        if hue_shift > MAX_HUE_SHIFT:
-            new_avg_r = MIN_AVG_RED
+        if hue_shift <= MAX_HUE_SHIFT:
+            cos_h = math.cos(hue_shift * math.pi / 180)
+            sin_h = math.sin(hue_shift * math.pi / 180)
 
     # Применяем сдвиг оттенка ко всему изображению
     shifted_mat = hue_shift_red(mat, hue_shift)
@@ -179,35 +430,46 @@ def get_filter_matrix(mat):
     new_r_channel = np.clip(new_r_channel, 0, 255)
     mat[..., 0] = new_r_channel
 
-    # Получаем гистограммы всех каналов
-    hist_r = cv2.calcHist([mat], [0], None, [256], [0,256])
-    hist_g = cv2.calcHist([mat], [1], None, [256], [0,256])
-    hist_b = cv2.calcHist([mat], [2], None, [256], [0,256])
+    # Оптимизированное вычисление гистограмм
+    hist_r = cv2.calcHist([mat], [0], None, [256], [0, 256])
+    hist_g = cv2.calcHist([mat], [1], None, [256], [0, 256])
+    hist_b = cv2.calcHist([mat], [2], None, [256], [0, 256])
 
+    # Векторизованная обработка нормализации
+    threshold_level = (mat.shape[0] * mat.shape[1]) / THRESHOLD_RATIO
     normalize_mat = np.zeros((256, 3))
-    threshold_level = (mat.shape[0]*mat.shape[1])/THRESHOLD_RATIO
-    for x in range(256):
-        if hist_r[x] < threshold_level:
-            normalize_mat[x][0] = x
-        if hist_g[x] < threshold_level:
-            normalize_mat[x][1] = x
-        if hist_b[x] < threshold_level:
-            normalize_mat[x][2] = x
+    
+    # Используем векторизованные операции вместо циклов
+    r_mask = hist_r.flatten() < threshold_level
+    g_mask = hist_g.flatten() < threshold_level
+    b_mask = hist_b.flatten() < threshold_level
+    
+    normalize_mat[r_mask, 0] = np.arange(256)[r_mask]
+    normalize_mat[g_mask, 1] = np.arange(256)[g_mask]
+    normalize_mat[b_mask, 2] = np.arange(256)[b_mask]
 
-    normalize_mat[255][0] = 255
-    normalize_mat[255][1] = 255
-    normalize_mat[255][2] = 255
+    normalize_mat[255] = 255
 
     adjust_r_low, adjust_r_high = normalizing_interval(normalize_mat[..., 0])
     adjust_g_low, adjust_g_high = normalizing_interval(normalize_mat[..., 1])
     adjust_b_low, adjust_b_high = normalizing_interval(normalize_mat[..., 2])
 
-    shifted = hue_shift_red(np.array([1, 1, 1]), hue_shift)
-    shifted_r, shifted_g, shifted_b = shifted[0][0]
+    # Предвычисляем сдвиг для финального hue_shift
+    final_cos_h = math.cos(hue_shift * math.pi / 180)
+    final_sin_h = math.sin(hue_shift * math.pi / 180)
+    
+    shifted_r = 0.299 + 0.701 * final_cos_h + 0.168 * final_sin_h
+    shifted_g = 0.587 - 0.587 * final_cos_h + 0.330 * final_sin_h
+    shifted_b = 0.114 - 0.114 * final_cos_h - 0.497 * final_sin_h
 
-    red_gain = 256 / (adjust_r_high - adjust_r_low)
-    green_gain = 256 / (adjust_g_high - adjust_g_low)
-    blue_gain = 256 / (adjust_b_high - adjust_b_low)
+    # Предотвращаем деление на ноль
+    r_range = max(adjust_r_high - adjust_r_low, 1)
+    g_range = max(adjust_g_high - adjust_g_low, 1)
+    b_range = max(adjust_b_high - adjust_b_low, 1)
+    
+    red_gain = 256 / r_range
+    green_gain = 256 / g_range
+    blue_gain = 256 / b_range
 
     redOffset = (-adjust_r_low / 256) * red_gain
     greenOffset = (-adjust_g_low / 256) * green_gain
@@ -261,8 +523,27 @@ def correct_image_mobile(input_path, output_path):
             "message": f"Error processing image: {str(e)}"
         }
 
+def _process_frame_for_analysis(args):
+    """Обрабатывает один кадр для анализа (для многопроцессной обработки)"""
+    frame_data, frame_number, rotation_angle = args
+    try:
+        # Декодируем кадр из байтов
+        frame = cv2.imdecode(np.frombuffer(frame_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            return None
+            
+        # Применяем поворот к кадру перед анализом
+        rotated_frame = apply_rotation(frame, rotation_angle)
+        mat = cv2.cvtColor(rotated_frame, cv2.COLOR_BGR2RGB)
+        filter_matrix = get_filter_matrix(mat)
+        
+        return frame_number, filter_matrix
+    except Exception as e:
+        logger.warning(f"Ошибка при обработке кадра {frame_number}: {str(e)}")
+        return None
+
 def analyze_video_mobile(input_video_path, output_video_path, progress_callback=None):
-    """Анализирует видео для мобильного API"""
+    """Анализирует видео для мобильного API (оптимизированная версия)"""
     try:
         # Определяем поворот видео
         rotation_angle = get_video_rotation(input_video_path)
@@ -274,8 +555,8 @@ def analyze_video_mobile(input_video_path, output_video_path, progress_callback=
         fps = math.ceil(cap.get(cv2.CAP_PROP_FPS))
         frame_count = math.ceil(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        filter_matrix_indexes = []
-        filter_matrices = []
+        # Собираем кадры для анализа
+        frames_to_analyze = []
         count = 0
         
         logger.info("Starting video analysis...")
@@ -290,33 +571,58 @@ def analyze_video_mobile(input_video_path, output_video_path, progress_callback=
                     break
                 continue
 
-            # Выбираем матрицу фильтра каждые N секунд
+            # Выбираем кадры для анализа каждые N секунд
             if count % (fps * SAMPLE_SECONDS) == 0:
-                try:
-                    # Применяем поворот к кадру перед анализом
-                    rotated_frame = apply_rotation(frame, rotation_angle)
-                    mat = cv2.cvtColor(rotated_frame, cv2.COLOR_BGR2RGB)
-                    filter_matrix_indexes.append(count) 
-                    filter_matrices.append(get_filter_matrix(mat))
-                except Exception as e:
-                    logger.warning(f"Ошибка при обработке кадра {count}: {str(e)}")
-                    continue
+                # Кодируем кадр в байты для передачи в процессы
+                _, encoded_frame = cv2.imencode('.jpg', frame)
+                frames_to_analyze.append((encoded_frame.tobytes(), count, rotation_angle))
                 
                 if progress_callback:
                     progress_callback({
                         "stage": "analyzing",
-                        "progress": (count / frame_count) * 50,  # Анализ занимает 50% времени
+                        "progress": (count / frame_count) * 30,  # Сбор кадров занимает 30% времени
                         "frames_processed": count,
                         "total_frames": frame_count
                     })
         
         cap.release()
 
-        # Проверяем, что мы получили хотя бы одну матрицу фильтра
-        if not filter_matrices:
+        # Проверяем, что мы получили хотя бы один кадр для анализа
+        if not frames_to_analyze:
             raise ValueError("Не удалось получить ни одного кадра для анализа. Проверьте корректность видеофайла.")
         
-        filter_matrices = np.array(filter_matrices)
+        # Многопроцессная обработка кадров
+        logger.info(f"Processing {len(frames_to_analyze)} frames with multiprocessing...")
+        
+        # Определяем количество процессов (не больше количества кадров)
+        num_processes = min(mp.cpu_count(), len(frames_to_analyze))
+        
+        filter_matrix_indexes = []
+        filter_matrices = []
+        
+        with ProcessPoolExecutor(max_workers=num_processes) as executor:
+            results = list(executor.map(_process_frame_for_analysis, frames_to_analyze))
+            
+            # Собираем результаты
+            for result in results:
+                if result is not None:
+                    frame_number, filter_matrix = result
+                    filter_matrix_indexes.append(frame_number)
+                    filter_matrices.append(filter_matrix)
+        
+        # Сортируем результаты по номеру кадра
+        sorted_data = sorted(zip(filter_matrix_indexes, filter_matrices))
+        filter_matrix_indexes, filter_matrices = zip(*sorted_data) if sorted_data else ([], [])
+        
+        if progress_callback:
+            progress_callback({
+                "stage": "analyzing",
+                "progress": 50,  # Анализ завершен
+                "frames_processed": count,
+                "total_frames": frame_count
+            })
+        
+        filter_matrices = np.array(filter_matrices) if filter_matrices else np.array([])
         
         return {
             "input_video_path": input_video_path,
@@ -324,7 +630,7 @@ def analyze_video_mobile(input_video_path, output_video_path, progress_callback=
             "fps": fps,
             "frame_count": count,
             "filters": filter_matrices,
-            "filter_indices": filter_matrix_indexes,
+            "filter_indices": list(filter_matrix_indexes),
             "rotation_angle": rotation_angle
         }
         
@@ -332,13 +638,52 @@ def analyze_video_mobile(input_video_path, output_video_path, progress_callback=
         logger.error(f"Error analyzing video: {str(e)}")
         raise
 
+def _process_frame_batch(args):
+    """Обрабатывает батч кадров (для многопроцессной обработки)"""
+    frames_data, frame_numbers, filter_matrices, filter_indices, rotation_angle = args
+    try:
+        processed_frames = []
+        
+        for i, (frame_data, frame_number) in enumerate(zip(frames_data, frame_numbers)):
+            # Декодируем кадр из байтов
+            frame = cv2.imdecode(np.frombuffer(frame_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if frame is None:
+                continue
+                
+            # Применяем поворот к кадру
+            rotated_frame = apply_rotation(frame, rotation_angle)
+            
+            # Применяем фильтр
+            rgb_mat = cv2.cvtColor(rotated_frame, cv2.COLOR_BGR2RGB)
+            
+            # Интерполируем матрицу фильтра
+            if len(filter_matrices) > 0:
+                interpolated_filter = [np.interp(frame_number, filter_indices, filter_matrices[..., x]) 
+                                     for x in range(len(filter_matrices[0]))]
+                corrected_mat = apply_filter(rgb_mat, interpolated_filter)
+                corrected_mat = cv2.cvtColor(corrected_mat, cv2.COLOR_RGB2BGR)
+            else:
+                corrected_mat = rotated_frame
+            
+            # Кодируем обработанный кадр обратно в байты
+            _, encoded_frame = cv2.imencode('.jpg', corrected_mat)
+            processed_frames.append((frame_number, encoded_frame.tobytes()))
+        
+        return processed_frames
+    except Exception as e:
+        logger.warning(f"Ошибка при обработке батча кадров: {str(e)}")
+        return []
+
 def process_video_mobile(video_data, progress_callback=None):
-    """Обрабатывает видео для мобильного API"""
+    """Обрабатывает видео для мобильного API (оптимизированная версия)"""
     try:
         cap = cv2.VideoCapture(video_data["input_video_path"])
         if not cap.isOpened():
             raise ValueError(f"Не удалось открыть видео: {video_data['input_video_path']}")
 
+        # Оптимизируем настройки чтения видео
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Уменьшаем буфер для экономии памяти
+        
         frame_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
         frame_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
         
@@ -351,28 +696,38 @@ def process_video_mobile(video_data, progress_callback=None):
         output_width, output_height = get_rotated_dimensions(frame_width, frame_height, rotation_angle)
         logger.info(f"Output video dimensions after rotation: {output_width}x{output_height}")
 
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # Используем более эффективный кодек
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')  # avc1 (H.264) более эффективен чем mp4v
         new_video = cv2.VideoWriter(
             video_data["output_video_path"], 
             fourcc, 
             video_data["fps"], 
             (int(output_width), int(output_height))
         )
+        
+        # Настраиваем параметры кодека для лучшей производительности
+        if hasattr(new_video, 'set'):
+            new_video.set(cv2.VIDEOWRITER_PROP_QUALITY, VIDEO_QUALITY)
+            logger.info(f"Set video quality to: {VIDEO_QUALITY}%")
 
         filter_matrices = video_data["filters"]
         filter_indices = video_data["filter_indices"]
-
-        def get_interpolated_filter_matrix(frame_number):
-            if len(filter_matrices) == 0:
-                raise ValueError("Нет доступных матриц фильтра для интерполяции")
-            return [np.interp(frame_number, filter_indices, filter_matrices[..., x]) for x in range(len(filter_matrices[0]))]
 
         logger.info("Starting video processing...")
 
         frame_count = video_data["frame_count"]
         count = 0
         
+        # Параметры для батчевой обработки
+        batch_size = BATCH_SIZE
+        frames_batch = []
+        frame_numbers_batch = []
+        
         cap = cv2.VideoCapture(video_data["input_video_path"])
+        
+        # Определяем количество процессов для обработки
+        num_processes = min(mp.cpu_count(), MAX_PROCESSES)
+        
         while(cap.isOpened()):
             count += 1
             ret, frame = cap.read()
@@ -384,18 +739,36 @@ def process_video_mobile(video_data, progress_callback=None):
                     break
                 continue
 
-            # Применяем поворот к кадру
-            rotated_frame = apply_rotation(frame, rotation_angle)
+            # Кодируем кадр в байты для передачи в процессы
+            _, encoded_frame = cv2.imencode('.jpg', frame)
+            frames_batch.append(encoded_frame.tobytes())
+            frame_numbers_batch.append(count)
             
-            # Применяем фильтр
-            rgb_mat = cv2.cvtColor(rotated_frame, cv2.COLOR_BGR2RGB)
-            interpolated_filter_matrix = get_interpolated_filter_matrix(count)
-            corrected_mat = apply_filter(rgb_mat, interpolated_filter_matrix)
-            corrected_mat = cv2.cvtColor(corrected_mat, cv2.COLOR_RGB2BGR)
-
-            new_video.write(corrected_mat)
+            # Обрабатываем батч когда он заполнен или достигли конца
+            if len(frames_batch) >= batch_size or count >= frame_count:
+                if frames_batch:
+                    # Многопроцессная обработка батча
+                    batch_args = (frames_batch, frame_numbers_batch, filter_matrices, 
+                                filter_indices, rotation_angle)
+                    
+                    with ProcessPoolExecutor(max_workers=num_processes) as executor:
+                        results = list(executor.map(_process_frame_batch, [batch_args]))
+                    
+                    # Записываем обработанные кадры в видео
+                    for result in results:
+                        for frame_number, processed_frame_data in result:
+                            processed_frame = cv2.imdecode(
+                                np.frombuffer(processed_frame_data, dtype=np.uint8), 
+                                cv2.IMREAD_COLOR
+                            )
+                            if processed_frame is not None:
+                                new_video.write(processed_frame)
+                    
+                    # Очищаем батч
+                    frames_batch = []
+                    frame_numbers_batch = []
             
-            if progress_callback:
+            if progress_callback and count % 10 == 0:  # Обновляем прогресс каждые 10 кадров
                 progress = 50 + (count / frame_count) * 50  # Обработка занимает оставшиеся 50%
                 progress_callback({
                     "stage": "processing",

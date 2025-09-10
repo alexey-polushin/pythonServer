@@ -1,0 +1,138 @@
+# Файлы, которые НЕ нужно копировать при развертывании
+
+# Конфигурационные файлы с секретными данными
+server_config.json
+.env
+.env.local
+.env.production
+
+# Python кэш и временные файлы
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE файлы
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS файлы
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Логи
+*.log
+logs/
+app.log
+
+# Загруженные файлы и результаты
+uploads/
+outputs/
+temp/
+tests/*.mp4
+tests/*.avi
+tests/*.mov
+
+# База данных
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker файлы (не нужны на сервере)
+Dockerfile
+docker-compose.yml
+.dockerignore
+docker/
+
+# Backup файлы
+backup/
+*.bak
+*.backup
+
+# Временные файлы
+tmp/
+temp/
+*.tmp
+
+# Git файлы
+.git/
+.gitignore
+.gitattributes
+
+# Документация (не нужна на сервере)
+*.md
+!README.md
+
+# Скрипты разработки (не нужны на сервере)
+scripts/gpu_optimization_test.py
+scripts/performance_test.py
+scripts/quick_performance_test.py
+scripts/simple_quality_test.py
+scripts/test_quality.py
+scripts/monitor_performance.py
+
+# Конфигурационные файлы разработки
+config_profiles.json
+quality_profiles.json
+performance_config.py
+
+# Отчеты и анализ (не нужны на сервере)
+*_REPORT.md
+*_ANALYSIS.md
+*_FIX_REPORT.md
+*_GUIDE.md
+*_SUCCESS_REPORT.md
+
+# Тестовые видео файлы
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+*.flv
+*.webm
+
+# Временные конфигурации
+server_setup_config.json
+server_optimization_config.json
+logging_config.json
+start_server.sh
+
+# Makefile (не нужен на сервере)
+Makefile
+
+# Скрипты развертывания (не нужны на сервере)
+deploy*.sh
+deploy*.py

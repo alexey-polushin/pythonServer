@@ -7,6 +7,7 @@ import json
 
 from ..models.schemas import HealthResponse
 from ..services.video_processor import video_processor
+from ..dive_color_corrector.mobile_correct import configure_performance, get_performance_info
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +247,51 @@ async def mobile_list_files():
         }
     except Exception as e:
         logger.error(f"Error listing files: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+# Performance management endpoints
+@router.get("/api/performance/info")
+async def get_performance_info_endpoint():
+    """Получение информации о настройках производительности"""
+    try:
+        info = get_performance_info()
+        return {
+            "success": True,
+            "data": info
+        }
+    except Exception as e:
+        logger.error(f"Error getting performance info: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@router.post("/api/performance/configure")
+async def configure_performance_endpoint(
+    batch_size: int = None,
+    max_processes: int = None,
+    video_quality: int = None,
+    use_gpu: bool = None
+):
+    """Настройка параметров производительности"""
+    try:
+        configure_performance(
+            batch_size=batch_size,
+            max_processes=max_processes,
+            video_quality=video_quality,
+            use_gpu=use_gpu
+        )
+        
+        return {
+            "success": True,
+            "message": "Performance settings updated successfully",
+            "data": get_performance_info()
+        }
+    except Exception as e:
+        logger.error(f"Error configuring performance: {str(e)}")
         return {
             "success": False,
             "error": str(e)

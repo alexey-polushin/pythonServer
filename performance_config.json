@@ -1,0 +1,7 @@
+{
+  "batch_size": 96,
+  "max_processes": 6,
+  "video_quality": 85,
+  "use_gpu": true,
+  "auto_configure": false
+}
