@@ -43,15 +43,16 @@ THRESHOLD_RATIO = 2000
 MIN_AVG_RED = 60
 MAX_HUE_SHIFT = 120
 BLUE_MAGIC_VALUE = 1.2
-SAMPLE_SECONDS = 2
+SAMPLE_SECONDS = 1.0  # Берем кадры каждые 1.0 секунду для ускорения анализа
 
 # Параметры производительности
-BATCH_SIZE = 32  # Размер батча для обработки кадров
-MAX_PROCESSES = 4  # Максимальное количество процессов
-VIDEO_QUALITY = 60  # Качество выходного видео (0-100) - снижено для уменьшения размера
+BATCH_SIZE = 4  # Минимальный размер батча для простоты
+MAX_PROCESSES = 2  # Минимальное количество процессов
+VIDEO_QUALITY = 100  # Максимальное качество (без сжатия)
 USE_GPU = True  # Использовать GPU если доступен
-ENABLE_FFMPEG_OPTIMIZATION = True  # Включить постобработку через FFmpeg для лучшего сжатия
-VIDEO_CODEC = 'mp4v'  # Оптимальный кодек для .mp4 файлов
+ENABLE_FFMPEG_OPTIMIZATION = False  # Отключить постобработку для скорости
+VIDEO_CODEC = 'mp4v'  # Кодек без потерь для сохранения качества
+
 
 # Загружаем конфигурацию при импорте модуля
 def _load_performance_config():
@@ -422,7 +423,7 @@ def apply_filter_cuda(mat, filt):
     return result
 
 def apply_filter_cpu(mat, filt):
-    """Применяет фильтр к изображению на CPU (оптимизированная версия)"""
+    """Применяет фильтр к изображению на CPU (оригинальная версия)"""
     # Используем in-place операции для экономии памяти
     filtered_mat = mat.astype(np.float32)
     
@@ -448,6 +449,7 @@ def apply_filter(mat, filt):
         return apply_filter_gpu(mat, filt)
     else:
         return apply_filter_cpu(mat, filt)
+
 
 def get_filter_matrix(mat):
     """Получает матрицу фильтра для коррекции цветов (оптимизированная версия)"""
@@ -607,8 +609,23 @@ def analyze_video_mobile(input_video_path, output_video_path, progress_callback=
         if not cap.isOpened():
             raise ValueError(f"Не удалось открыть видео: {input_video_path}")
             
-        fps = math.ceil(cap.get(cv2.CAP_PROP_FPS))
-        frame_count = math.ceil(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        # Более точное определение количества кадров через ffprobe
+        try:
+            import subprocess
+            cmd = ['ffprobe', '-v', 'quiet', '-select_streams', 'v:0', '-show_entries', 'stream=nb_frames', '-of', 'csv=p=0', input_video_path]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and result.stdout.strip():
+                frame_count = int(result.stdout.strip())
+                logger.info(f"Frame count from ffprobe: {frame_count}")
+            else:
+                frame_count = math.ceil(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                logger.warning(f"Using OpenCV frame count: {frame_count}")
+        except Exception as e:
+            frame_count = math.ceil(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            logger.warning(f"Error getting frame count from ffprobe: {e}, using OpenCV: {frame_count}")
+        
+        logger.info(f"Video info: FPS={fps}, Frame count={frame_count}")
         
         # Собираем кадры для анализа
         frames_to_analyze = []
@@ -617,17 +634,21 @@ def analyze_video_mobile(input_video_path, output_video_path, progress_callback=
         logger.info("Starting video analysis...")
         
         while(cap.isOpened()):
-            count += 1
             ret, frame = cap.read()
             if not ret:
                 if count >= frame_count:
+                    logger.info(f"Reached expected frame count in analysis: {frame_count}")
                     break
-                if count >= 1e6:
+                if count >= 1e6:  # Защита от бесконечного цикла
+                    logger.warning(f"Reached maximum frame limit in analysis: {count}")
                     break
+                logger.warning(f"Failed to read frame {count + 1} in analysis, continuing...")
                 continue
+            
+            count += 1
 
             # Выбираем кадры для анализа каждые N секунд
-            if count % (fps * SAMPLE_SECONDS) == 0:
+            if count % int(fps * SAMPLE_SECONDS) == 0:
                 # Кодируем кадр в байты для передачи в процессы
                 _, encoded_frame = cv2.imencode('.jpg', frame)
                 frames_to_analyze.append((encoded_frame.tobytes(), count, rotation_angle))
@@ -695,8 +716,9 @@ def analyze_video_mobile(input_video_path, output_video_path, progress_callback=
         logger.error(f"Error analyzing video: {str(e)}")
         raise
 
+
 def _process_frame_batch(args):
-    """Обрабатывает батч кадров (для многопроцессной обработки)"""
+    """Обрабатывает батч кадров (для многопроцессной обработки) - оптимизированная версия"""
     frames_data, frame_numbers, filter_matrices, filter_indices, rotation_angle = args
     try:
         processed_frames = []
@@ -763,11 +785,11 @@ def process_video_mobile(video_data, progress_callback=None):
             (int(output_width), int(output_height))
         )
         
-        # Настраиваем параметры кодека для оптимального сжатия
+        # Настраиваем параметры кодека для сохранения качества (без сжатия)
         if hasattr(new_video, 'set'):
-            # Устанавливаем качество (0-100, где 100 - лучшее качество)
-            new_video.set(cv2.VIDEOWRITER_PROP_QUALITY, VIDEO_QUALITY)
-            logger.info(f"Set video quality to: {VIDEO_QUALITY}% with mp4v codec")
+            # Устанавливаем максимальное качество для сохранения оригинального качества
+            new_video.set(cv2.VIDEOWRITER_PROP_QUALITY, 100)  # Максимальное качество
+            logger.info(f"Set video quality to: 100% (no compression) with {VIDEO_CODEC} codec")
 
         filter_matrices = video_data["filters"]
         filter_indices = video_data["filter_indices"]
@@ -782,34 +804,41 @@ def process_video_mobile(video_data, progress_callback=None):
         frames_batch = []
         frame_numbers_batch = []
         
+        # Создаем новый VideoCapture для обработки (позиция сброшена)
         cap = cv2.VideoCapture(video_data["input_video_path"])
         
         # Определяем количество процессов для обработки
         num_processes = min(mp.cpu_count(), MAX_PROCESSES)
         
+        # Простая последовательная обработка (как в оригинале)
         while(cap.isOpened()):
-            count += 1
             ret, frame = cap.read()
             
             if not ret:
                 if count >= frame_count:
+                    logger.info(f"Reached expected frame count: {frame_count}")
                     break
-                if count >= 1e6:
+                if count >= 1e6:  # Защита от бесконечного цикла
+                    logger.warning(f"Reached maximum frame limit: {count}")
                     break
+                logger.warning(f"Failed to read frame {count + 1}, continuing...")
                 continue
+            
+            count += 1
 
-            # Кодируем кадр в байты для передачи в процессы
+            # Кодируем кадр в JPG для скорости
             _, encoded_frame = cv2.imencode('.jpg', frame)
             frames_batch.append(encoded_frame.tobytes())
             frame_numbers_batch.append(count)
             
-            # Обрабатываем батч когда он заполнен или достигли конца
-            if len(frames_batch) >= batch_size or count >= frame_count:
+            # Обрабатываем батч когда он заполнен
+            if len(frames_batch) >= batch_size:
                 if frames_batch:
                     # Многопроцессная обработка батча
                     batch_args = (frames_batch, frame_numbers_batch, filter_matrices, 
                                 filter_indices, rotation_angle)
                     
+                    # Создаем локальный пул процессов для каждого батча
                     with ProcessPoolExecutor(max_workers=num_processes) as executor:
                         results = list(executor.map(_process_frame_batch, [batch_args]))
                     
@@ -826,18 +855,31 @@ def process_video_mobile(video_data, progress_callback=None):
                     # Очищаем батч
                     frames_batch = []
                     frame_numbers_batch = []
+        
+        # Обрабатываем оставшиеся кадры
+        if frames_batch:
+            logger.info(f"Processing remaining {len(frames_batch)} frames...")
+            batch_args = (frames_batch, frame_numbers_batch, filter_matrices, 
+                        filter_indices, rotation_angle)
             
-            if progress_callback and count % 10 == 0:  # Обновляем прогресс каждые 10 кадров
-                progress = 50 + (count / frame_count) * 50  # Обработка занимает оставшиеся 50%
-                progress_callback({
-                    "stage": "processing",
-                    "progress": progress,
-                    "frames_processed": count,
-                    "total_frames": frame_count
-                })
+            # Создаем локальный пул процессов для оставшихся кадров
+            with ProcessPoolExecutor(max_workers=num_processes) as executor:
+                results = list(executor.map(_process_frame_batch, [batch_args]))
+            
+            # Записываем обработанные кадры в видео
+            for result in results:
+                for frame_number, processed_frame_data in result:
+                    processed_frame = cv2.imdecode(
+                        np.frombuffer(processed_frame_data, dtype=np.uint8), 
+                        cv2.IMREAD_COLOR
+                    )
+                    if processed_frame is not None:
+                        new_video.write(processed_frame)
 
         cap.release()
         new_video.release()
+        
+        logger.info(f"Video processing completed. Processed {count} frames out of {frame_count} expected.")
         
         # Оптимизируем видео через ffmpeg для лучшего сжатия (если включено)
         if ENABLE_FFMPEG_OPTIMIZATION:
