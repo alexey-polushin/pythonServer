@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Улучшенный скрипт для развертывания Python API Server
-Включает исправления выявленных проблем
+Универсальный скрипт для развертывания Python API Server
 """
 
 import json
@@ -44,14 +43,28 @@ def clear_ssh_host_key(host: str) -> bool:
         print(f"⚠️ Ошибка при очистке SSH ключа: {e}")
         return False
 
-def run_ssh_command(host: str, username: str, password: str, command: str) -> bool:
+def run_ssh_command(host: str, username: str, auth_method: str, password: str = None, ssh_key_path: str = None, command: str = "") -> bool:
     """Выполняет команду по SSH"""
     try:
-        cmd = [
-            "sshpass", "-p", password,
-            f"{username}@{host}",
-            command
-        ]
+        if auth_method == "key" and ssh_key_path:
+            # Используем SSH ключ
+            cmd = [
+                "ssh", "-i", ssh_key_path,
+                "-o", "StrictHostKeyChecking=no",
+                f"{username}@{host}",
+                command
+            ]
+        else:
+            # Используем пароль через sshpass
+            if not password:
+                print("❌ Пароль не указан для аутентификации по паролю")
+                return False
+            cmd = [
+                "sshpass", "-p", password,
+                "ssh", "-o", "StrictHostKeyChecking=no",
+                f"{username}@{host}",
+                command
+            ]
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
@@ -67,29 +80,53 @@ def run_ssh_command(host: str, username: str, password: str, command: str) -> bo
     except subprocess.TimeoutExpired:
         print("❌ Таймаут выполнения команды")
         return False
-    except FileNotFoundError:
-        print("❌ sshpass не установлен. Установите: brew install hudochenkov/sshpass/sshpass")
+    except FileNotFoundError as e:
+        if auth_method == "key":
+            print("❌ SSH не установлен или ключ не найден")
+        else:
+            print("❌ sshpass не установлен. Установите: brew install hudochenkov/sshpass/sshpass")
         return False
     except Exception as e:
         print(f"❌ Ошибка SSH: {e}")
         return False
 
-def copy_files_to_server(host: str, username: str, password: str, local_path: str, remote_path: str) -> bool:
+def copy_files_to_server(host: str, username: str, auth_method: str, password: str = None, ssh_key_path: str = None, local_path: str = "", remote_path: str = "") -> bool:
     """Копирует файлы на сервер"""
     try:
-        cmd = [
-            "sshpass", "-p", password,
-            "rsync", "-avz", "--progress",
-            "--exclude=.git",
-            "--exclude=__pycache__",
-            "--exclude='*.pyc'",
-            "--exclude=.env",
-            "--exclude=uploads/",
-            "--exclude=outputs/",
-            "--exclude=logs/",
-            f"{local_path}/",
-            f"{username}@{host}:{remote_path}/"
-        ]
+        if auth_method == "key" and ssh_key_path:
+            # Используем SSH ключ
+            cmd = [
+                "rsync", "-avz", "--progress",
+                "-e", f"ssh -i {ssh_key_path} -o StrictHostKeyChecking=no",
+                "--exclude=.git",
+                "--exclude=__pycache__",
+                "--exclude='*.pyc'",
+                "--exclude=.env",
+                "--exclude=uploads/",
+                "--exclude=outputs/",
+                "--exclude=logs/",
+                f"{local_path}/",
+                f"{username}@{host}:{remote_path}/"
+            ]
+        else:
+            # Используем пароль через sshpass
+            if not password:
+                print("❌ Пароль не указан для аутентификации по паролю")
+                return False
+            cmd = [
+                "sshpass", "-p", password,
+                "rsync", "-avz", "--progress",
+                "-e", "ssh -o StrictHostKeyChecking=no",
+                "--exclude=.git",
+                "--exclude=__pycache__",
+                "--exclude='*.pyc'",
+                "--exclude=.env",
+                "--exclude=uploads/",
+                "--exclude=outputs/",
+                "--exclude=logs/",
+                f"{local_path}/",
+                f"{username}@{host}:{remote_path}/"
+            ]
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         
@@ -110,21 +147,21 @@ def copy_files_to_server(host: str, username: str, password: str, local_path: st
         print(f"❌ Ошибка копирования: {e}")
         return False
 
-def check_server_connection(host: str, username: str, password: str) -> bool:
+def check_server_connection(host: str, username: str, auth_method: str, password: str = None, ssh_key_path: str = None) -> bool:
     """Проверяет соединение с сервером"""
     print(f"🔍 Проверяем соединение с сервером {host}...")
-    return run_ssh_command(host, username, password, "echo 'Connection successful'")
+    return run_ssh_command(host, username, auth_method, password, ssh_key_path, "echo 'Connection successful'")
 
-def prepare_docker_files(host: str, username: str, password: str, app_name: str) -> bool:
+def prepare_docker_files(host: str, username: str, auth_method: str, password: str = None, ssh_key_path: str = None, app_name: str = "") -> bool:
     """Подготавливает Docker файлы в правильном месте"""
     print("🐳 Подготавливаем Docker файлы...")
     
     # Копируем docker-compose.yml в корень
-    if not run_ssh_command(host, username, password, f"cd /opt/{app_name} && cp docker/docker-compose.yml ."):
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"cd /opt/{app_name} && cp docker/docker-compose.yml ."):
         return False
     
     # Копируем Dockerfile в корень
-    if not run_ssh_command(host, username, password, f"cd /opt/{app_name} && cp docker/Dockerfile ."):
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"cd /opt/{app_name} && cp docker/Dockerfile ."):
         return False
     
     print("✅ Docker файлы подготовлены")
@@ -137,69 +174,72 @@ def deploy_to_server(config: Dict[str, Any]) -> bool:
     
     host = server_config["host"]
     username = server_config["username"]
-    password = server_config["password"]
+    auth_method = server_config.get("auth_method", "password")
+    password = server_config.get("password")
+    ssh_key_path = server_config.get("ssh_key_path")
     app_name = deployment_config["app_name"]
     
     print(f"🚀 Начинаем развертывание {app_name} на {host}")
+    print(f"🔐 Метод аутентификации: {auth_method}")
     
     # Очищаем старый SSH ключ
     clear_ssh_host_key(host)
     
     # Проверяем соединение
-    if not check_server_connection(host, username, password):
+    if not check_server_connection(host, username, auth_method, password, ssh_key_path):
         return False
     
     # Копируем скрипт развертывания
     print("📋 Копируем скрипт развертывания...")
-    if not copy_files_to_server(host, username, password, "scripts/deploy_optimized.sh", "/tmp/"):
+    if not copy_files_to_server(host, username, auth_method, password, ssh_key_path, "scripts/deploy_universal.sh", "/tmp/"):
         return False
     
     # Выполняем скрипт развертывания
     print("🔧 Выполняем скрипт развертывания...")
-    if not run_ssh_command(host, username, password, "chmod +x /tmp/deploy_optimized.sh && /tmp/deploy_optimized.sh"):
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, "chmod +x /tmp/deploy_universal.sh && /tmp/deploy_universal.sh"):
         return False
     
     # Копируем файлы проекта
     print("📁 Копируем файлы проекта...")
-    if not copy_files_to_server(host, username, password, ".", f"/opt/{app_name}"):
+    if not copy_files_to_server(host, username, auth_method, password, ssh_key_path, ".", f"/opt/{app_name}"):
         return False
     
     # Подготавливаем Docker файлы
-    if not prepare_docker_files(host, username, password, app_name):
+    if not prepare_docker_files(host, username, auth_method, password, ssh_key_path, app_name):
         return False
     
     # Останавливаем systemd сервис если он запущен
     print("⏹️ Останавливаем systemd сервис...")
-    run_ssh_command(host, username, password, f"systemctl stop {app_name}.service")
+    run_ssh_command(host, username, auth_method, password, ssh_key_path, f"systemctl stop {app_name}.service")
     
     # Запускаем контейнеры
     print("🐳 Запускаем Docker контейнеры...")
-    if not run_ssh_command(host, username, password, f"cd /opt/{app_name} && docker-compose down && docker-compose up -d api redis"):
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"cd /opt/{app_name} && docker-compose down && docker-compose up -d"):
         return False
     
     # Ждем запуска
     print("⏳ Ждем запуска контейнеров...")
-    time.sleep(15)
+    time.sleep(20)
     
     # Проверяем статус контейнеров
     print("🔍 Проверяем статус контейнеров...")
-    if not run_ssh_command(host, username, password, f"cd /opt/{app_name} && docker-compose ps"):
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"cd /opt/{app_name} && docker-compose ps"):
         return False
     
     # Проверяем доступность API
     print("🌐 Проверяем доступность API...")
-    if not run_ssh_command(host, username, password, f"curl -f http://localhost:{deployment_config['app_port']}/health"):
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"curl -f http://localhost:{deployment_config['app_port']}/health"):
         print("⚠️ API может быть недоступен, но контейнеры запущены")
     
     # Запускаем systemd сервис
     print("🔧 Запускаем systemd сервис...")
-    if not run_ssh_command(host, username, password, f"systemctl start {app_name}.service"):
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"systemctl start {app_name}.service"):
         print("⚠️ Не удалось запустить systemd сервис, но контейнеры работают")
     
     # Финальная проверка
     print("🔍 Финальная проверка...")
-    time.sleep(5)
-    if not run_ssh_command(host, username, password, f"curl -f http://localhost:{deployment_config['app_port']}/health"):
+    time.sleep(10)
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"curl -f http://localhost:{deployment_config['app_port']}/health"):
         print("⚠️ API недоступен после запуска systemd сервиса")
     
     print("🎉 Развертывание завершено!")
@@ -211,7 +251,7 @@ def deploy_to_server(config: Dict[str, Any]) -> bool:
 
 def main():
     """Главная функция"""
-    print("🐍 Python API Server Deployer (Improved)")
+    print("🐍 Python API Server Deployer")
     print("=" * 50)
     
     # Проверяем наличие конфигурационного файла
@@ -256,4 +296,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
