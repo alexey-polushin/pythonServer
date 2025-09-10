@@ -46,15 +46,17 @@ def clear_ssh_host_key(host: str) -> bool:
 def run_ssh_command(host: str, username: str, auth_method: str, password: str = None, ssh_key_path: str = None, command: str = "") -> bool:
     """Выполняет команду по SSH"""
     try:
-        if auth_method == "key" and ssh_key_path:
+        if auth_method == "ssh_key" and ssh_key_path:
             # Используем SSH ключ
+            # Раскрываем тильду в пути к ключу
+            expanded_key_path = os.path.expanduser(ssh_key_path)
             cmd = [
-                "ssh", "-i", ssh_key_path,
+                "ssh", "-i", expanded_key_path,
                 "-o", "StrictHostKeyChecking=no",
                 f"{username}@{host}",
                 command
             ]
-        else:
+        elif auth_method == "password":
             # Используем пароль через sshpass
             if not password:
                 print("❌ Пароль не указан для аутентификации по паролю")
@@ -65,6 +67,9 @@ def run_ssh_command(host: str, username: str, auth_method: str, password: str = 
                 f"{username}@{host}",
                 command
             ]
+        else:
+            print("❌ Неверный метод аутентификации или отсутствуют необходимые параметры")
+            return False
         
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
@@ -81,7 +86,7 @@ def run_ssh_command(host: str, username: str, auth_method: str, password: str = 
         print("❌ Таймаут выполнения команды")
         return False
     except FileNotFoundError as e:
-        if auth_method == "key":
+        if auth_method == "ssh_key":
             print("❌ SSH не установлен или ключ не найден")
         else:
             print("❌ sshpass не установлен. Установите: brew install hudochenkov/sshpass/sshpass")
@@ -90,10 +95,50 @@ def run_ssh_command(host: str, username: str, auth_method: str, password: str = 
         print(f"❌ Ошибка SSH: {e}")
         return False
 
+def copy_single_file_to_server(host: str, username: str, auth_method: str, password: str = None, ssh_key_path: str = None, local_file: str = "", remote_file: str = "") -> bool:
+    """Копирует один файл на сервер"""
+    try:
+        if auth_method == "ssh_key" and ssh_key_path:
+            # Используем SSH ключ
+            expanded_key_path = os.path.expanduser(ssh_key_path)
+            cmd = [
+                "scp", "-i", expanded_key_path,
+                "-o", "StrictHostKeyChecking=no",
+                local_file,
+                f"{username}@{host}:{remote_file}"
+            ]
+        else:
+            # Используем пароль через sshpass
+            if not password:
+                print("❌ Пароль не указан для аутентификации по паролю")
+                return False
+            cmd = [
+                "sshpass", "-p", password,
+                "scp", "-o", "StrictHostKeyChecking=no",
+                local_file,
+                f"{username}@{host}:{remote_file}"
+            ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        if result.returncode == 0:
+            print(f"✅ Файл скопирован успешно")
+            return True
+        else:
+            print(f"❌ Ошибка копирования файла: {result.stderr}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        print("❌ Таймаут копирования файла")
+        return False
+    except Exception as e:
+        print(f"❌ Ошибка копирования файла: {e}")
+        return False
+
 def copy_files_to_server(host: str, username: str, auth_method: str, password: str = None, ssh_key_path: str = None, local_path: str = "", remote_path: str = "") -> bool:
     """Копирует файлы на сервер"""
     try:
-        if auth_method == "key" and ssh_key_path:
+        if auth_method == "ssh_key" and ssh_key_path:
             # Используем SSH ключ
             cmd = [
                 "rsync", "-avz", "--progress",
@@ -164,6 +209,16 @@ def prepare_docker_files(host: str, username: str, auth_method: str, password: s
     if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"cd /opt/{app_name} && cp docker/Dockerfile ."):
         return False
     
+    # Создаем директорию nginx и копируем конфигурацию
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"cd /opt/{app_name} && mkdir -p nginx && cp docker/nginx/nginx.conf nginx/"):
+        return False
+    
+    # Проверяем, что nginx.conf - это файл, а не директория
+    if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"cd /opt/{app_name} && test -f nginx/nginx.conf && echo 'nginx.conf is a file'"):
+        print("⚠️ nginx.conf не является файлом, исправляем...")
+        if not run_ssh_command(host, username, auth_method, password, ssh_key_path, f"cd /opt/{app_name} && rm -rf nginx/nginx.conf && cp docker/nginx/nginx.conf nginx/"):
+            return False
+    
     print("✅ Docker файлы подготовлены")
     return True
 
@@ -191,7 +246,7 @@ def deploy_to_server(config: Dict[str, Any]) -> bool:
     
     # Копируем скрипт развертывания
     print("📋 Копируем скрипт развертывания...")
-    if not copy_files_to_server(host, username, auth_method, password, ssh_key_path, "scripts/deploy_universal.sh", "/tmp/"):
+    if not copy_single_file_to_server(host, username, auth_method, password, ssh_key_path, "scripts/deploy_universal.sh", "/tmp/deploy_universal.sh"):
         return False
     
     # Выполняем скрипт развертывания
